@@ -1,0 +1,10 @@
+stage: stage1
+scenarios: [linear, smooth, tree, mixed]
+sample_sizes: [500, 1000, 2000, 5000]
+dimensions: [10, 50, 100]
+learners: [lasso, random_forest, xgboost, mlp, ensemble, tabiclv2]
+folds: 5
+replications: 20
+theta0: 1.0
+tabicl_estimators: 1
+

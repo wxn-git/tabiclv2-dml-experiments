@@ -1,0 +1,7 @@
+stage: stage2
+selected_configurations:
+  - {scenario: linear, n: 2000, p: 50}
+learners: [ensemble]
+folds: 5
+replications: 100
+theta0: 1.0

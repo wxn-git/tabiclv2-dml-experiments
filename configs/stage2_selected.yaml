@@ -1,0 +1,34 @@
+stage: stage2
+selected_configurations:
+- scenario: smooth
+  n: 1000
+  p: 50
+- scenario: smooth
+  n: 500
+  p: 50
+- scenario: smooth
+  n: 1000
+  p: 100
+- scenario: tree
+  n: 5000
+  p: 10
+- scenario: tree
+  n: 2000
+  p: 10
+- scenario: tree
+  n: 5000
+  p: 50
+- scenario: linear
+  n: 2000
+  p: 50
+learners:
+- lasso
+- random_forest
+- xgboost
+- mlp
+- ensemble
+- tabiclv2_1
+- tabiclv2_8
+folds: 5
+replications: 100
+theta0: 1.0

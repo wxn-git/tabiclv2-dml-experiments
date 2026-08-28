@@ -1,0 +1,60 @@
+# Python environments and generated package metadata
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Python bytecode and test/tool caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.matplotlib/
+
+# Local agent and editor state
+.agents/
+.codex/
+.idea/
+.vscode/
+
+# Runtime output, logs, and temporary files
+outputs/
+tmp/
+*.log
+
+# Keep only curated, publication-ready results in Git
+results/*
+!results/published/
+!results/published/**
+
+# Release assets are uploaded to GitHub Releases, not committed
+_release/
+*.zip
+*.7z
+*.tar
+*.tar.gz
+
+# Model weights and serialized estimators
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.joblib
+*.pkl
+
+# Reference papers and local report exports
+*.pdf
+*.docx
+
+# Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+desktop.ini

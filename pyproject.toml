@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tabiclv2-plr-dml"
+version = "0.1.0"
+description = "Monte Carlo comparison of TabICLv2 and traditional nuisance learners in PLR-DML"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.0",
+  "pandas>=2.2",
+  "scipy>=1.14",
+  "scikit-learn>=1.5",
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+models = [
+  "xgboost>=2.1",
+  "torch>=2.5",
+  "tabicl>=0.2",
+  "doubleml>=0.10",
+]
+report = [
+  "matplotlib>=3.9",
+  "seaborn>=0.13",
+]
+test = [
+  "pytest>=8.3",
+]
+all = [
+  "xgboost>=2.1",
+  "torch>=2.5",
+  "tabicl>=0.2",
+  "doubleml>=0.10",
+  "matplotlib>=3.9",
+  "seaborn>=0.13",
+  "pytest>=8.3",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "gpu: requires an NVIDIA GPU and TabICLv2 weights",
+  "integration: exercises optional third-party packages",
+]
+

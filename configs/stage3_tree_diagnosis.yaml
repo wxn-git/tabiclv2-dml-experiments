@@ -1,0 +1,18 @@
+stage: stage3_tree_diagnosis
+seed_namespace: stage3_tree_diagnosis
+selected_configurations:
+  - {scenario: tree, n: 2000, p: 10}
+learner_pairs:
+  - {name: tab_tab, learner_l: tabiclv2_1, learner_m: tabiclv2_1}
+  - {name: tab_xgb, learner_l: tabiclv2_1, learner_m: xgboost}
+  - {name: xgb_tab, learner_l: xgboost, learner_m: tabiclv2_1}
+  - {name: xgb_xgb, learner_l: xgboost, learner_m: xgboost}
+  - {name: oracle_tab, learner_l: oracle, learner_m: tabiclv2_1}
+  - {name: tab_oracle, learner_l: tabiclv2_1, learner_m: oracle}
+  - {name: oracle_xgb, learner_l: oracle, learner_m: xgboost}
+  - {name: xgb_oracle, learner_l: xgboost, learner_m: oracle}
+  - {name: oracle_oracle, learner_l: oracle, learner_m: oracle}
+folds: 5
+replications: 50
+theta0: 1.0
+tabicl_estimators: 1
