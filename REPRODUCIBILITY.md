@@ -189,6 +189,22 @@ results/stage3b_analysis/confirmation_summary.csv
 results/stage3b_analysis/analysis_report_zh.md
 ```
 
+### `tree_simple` 轴对齐阈值重跑
+
+配置文件：[`configs/stage3b_tree_simple.yaml`](configs/stage3b_tree_simple.yaml)。该场景保留三个单变量轴对齐阈值，删除原 tree 的乘积交互和非轴对齐边界。旧结果不会被覆盖。
+
+```powershell
+python scripts/run_stage3b_batch_a_parallel.py --replications 50 --cpu-workers 8 --stage stage3b_tree_simple_batch_a --seed-namespace stage3b_tree_simple_batch_a --scenario tree_simple --cache-root results/stage3b_tree_simple_cache_batch_a --output-root results/stage3b_tree_simple_batch_a_raw --log-dir results/logs/stage3b_tree_simple_batch_a
+
+python scripts/run_stage3b_screen_parallel.py --config configs/stage3b_tree_simple.yaml --replications 10 --cpu-workers 8 --output-root results/stage3b_tree_simple_screening_raw --selected-output results/stage3b_tree_simple_screening/selected_models.json --log-dir results/logs/stage3b_tree_simple_screening
+
+python scripts/run_stage3b_parallel.py --config configs/stage3b_tree_simple.yaml --replications 50 --cpu-workers 8 --cache-root results/stage3b_tree_simple_cache_confirmation --output-root results/stage3b_tree_simple_confirmation_raw --selected-models results/stage3b_tree_simple_screening/selected_models.json --log-dir results/logs/stage3b_tree_simple_confirmation
+
+python scripts/aggregate_stage3b.py --batch-a-root results/stage3b_tree_simple_batch_a_raw --screening-root results/stage3b_tree_simple_screening_raw --confirmation-root results/stage3b_tree_simple_confirmation_raw --output-root results/stage3b_tree_simple_analysis --title "Stage 3B Tree Simple机制诊断与处理模型筛选结果" --baseline-confirmation-summary results/published/stage3b/confirmation_summary.csv
+```
+
+论文级汇总、冻结配置和新旧场景对照位于 [`results/published/stage3b_tree_simple/`](results/published/stage3b_tree_simple/)。
+
 ## 11. 恢复 Release 中的原始结果
 
 从 GitHub Release 下载 `tabiclv2-dml-experiments-v0.1-stage3b-raw-results.zip`，在仓库根目录解压。归档保留 `results/...` 相对路径，因此解压后会回到各正式结果目录。

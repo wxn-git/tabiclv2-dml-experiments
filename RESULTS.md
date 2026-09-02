@@ -160,3 +160,11 @@ Stage 3B 包含三个批次：
 3. 增加真实或半合成数据，检验 smooth 优势是否具有外部意义；
 4. 将 Stage 2 二次分析完全脚本化；
 5. 报告 Monte Carlo standard error，并把 tree 结果作为机制性负面发现，而不是删除不利场景。
+
+## 8. `tree_simple` 轴对齐阈值重跑
+
+为检验原 tree 结果是否主要来自复杂决策边界，新增仅含单变量轴对齐阈值的 `tree_simple`，其余样本量、噪声、交叉拟合和学习器配置不变。三批正式结果分别为 450、170 和 750 条，全部成功。
+
+独立确认中，TabICLv2/TabICLv2 的 Bias、RMSE、Coverage 从 `-0.0928 / 0.0958 / 0.06` 改善为 `-0.0022 / 0.0248 / 0.88`；XGBoost/XGBoost 从 `-0.0494 / 0.0550 / 0.46` 改善为 `-0.0115 / 0.0256 / 0.94`。TabICLv2 的处理模型 MSE 从 0.1817 降到 0.0469。
+
+该结果说明复杂阈值边界是原实验失败的重要来源，但改善也包含 `l/m` 误差交叉项的有利抵消。完整汇总与新旧对照见 [`results/published/stage3b_tree_simple/`](results/published/stage3b_tree_simple/)。

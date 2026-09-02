@@ -49,5 +49,6 @@ def test_stage3b_aggregator_exposes_isolated_root_arguments():
         "--confirmation-root",
         "--output-root",
         "--title",
+        "--baseline-confirmation-summary",
     ):
         assert option in result.stdout

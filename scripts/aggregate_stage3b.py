@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from tabdml.stage3b_aggregate import aggregate_dml_records, markdown_table
+from tabdml.stage3b_aggregate import (
+    aggregate_dml_records,
+    compare_dml_summaries,
+    markdown_table,
+)
 
 
 def parse_args():
@@ -18,6 +22,7 @@ def parse_args():
     )
     parser.add_argument("--output-root", default="results/stage3b_analysis")
     parser.add_argument("--title", default="Stage 3B Tree机制诊断与处理模型筛选结果")
+    parser.add_argument("--baseline-confirmation-summary")
     return parser.parse_args()
 
 
@@ -57,6 +62,12 @@ def main() -> int:
     batch_a.to_csv(output / "batch_a_summary.csv", index=False)
     screening.to_csv(output / "screening_summary.csv", index=False)
     confirmation.to_csv(output / "confirmation_summary.csv", index=False)
+
+    comparison = None
+    if args.baseline_confirmation_summary:
+        baseline = pd.read_csv(args.baseline_confirmation_summary)
+        comparison = compare_dml_summaries(baseline, confirmation)
+        comparison.to_csv(output / "tree_comparison.csv", index=False)
 
     key_columns = [
         "learner_l",
@@ -98,6 +109,29 @@ def main() -> int:
         "",
         "说明：Batch C仍属于50次筛选后确认；论文最终覆盖率表需使用预先锁定配置和新的200至500次重复。",
     ]
+    if comparison is not None:
+        report.extend(
+            [
+                "",
+                "## 与基准场景的独立确认对照",
+                "",
+                markdown_table(
+                    comparison,
+                    [
+                        "learner_l",
+                        "learner_m",
+                        "bias_baseline",
+                        "bias_candidate",
+                        "rmse_baseline",
+                        "rmse_candidate",
+                        "coverage_baseline",
+                        "coverage_candidate",
+                        "mean_m_mse_baseline",
+                        "mean_m_mse_candidate",
+                    ],
+                ),
+            ]
+        )
     (output / "analysis_report_zh.md").write_text("\n".join(report), encoding="utf-8")
     print(f"Wrote Stage 3B analysis to {output}")
     return 0
