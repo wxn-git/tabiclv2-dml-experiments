@@ -16,6 +16,9 @@ def parse_args():
     parser.add_argument("--cache-root", default="results/stage3b_cache_batch_a")
     parser.add_argument("--output-root", default="results/stage3b_batch_a_raw")
     parser.add_argument("--log-dir", default="results/logs/stage3b_batch_a")
+    parser.add_argument("--stage", default="stage3b_batch_a")
+    parser.add_argument("--seed-namespace", default="stage3_tree_diagnosis")
+    parser.add_argument("--scenario", default="tree")
     return parser.parse_args()
 
 
@@ -34,6 +37,9 @@ def main() -> int:
         cache_root,
         args.cpu_workers,
         args.replications,
+        stage=args.stage,
+        seed_namespace=args.seed_namespace,
+        scenario=args.scenario,
     )
     print(f"Launching {len(commands)} Stage 3B Batch A workers.", flush=True)
     exit_codes = run_workers(
@@ -53,6 +59,12 @@ def main() -> int:
             str(_resolve(project_root, args.output_root)),
             "--replications",
             str(args.replications),
+            "--stage",
+            args.stage,
+            "--seed-namespace",
+            args.seed_namespace,
+            "--scenario",
+            args.scenario,
         ),
         cwd=project_root,
         check=False,

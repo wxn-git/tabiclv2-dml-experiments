@@ -1,0 +1,53 @@
+selected_configuration: {scenario: tree_simple, n: 2000, p: 10}
+theta0: 1.0
+folds: 5
+
+screening:
+  stage: stage3b_tree_simple_screening
+  seed_namespace: stage3b_tree_simple_screening
+  replications: 10
+  validation_fraction: 0.25
+  candidates:
+    - {name: tabiclv2_1, group: tab_baseline, learner_kind: tabiclv2_1}
+    - {name: tabiclv2_8, group: tab_baseline, learner_kind: tabiclv2_8}
+    - {name: current_xgboost, group: xgb_baseline, learner_kind: xgboost}
+    - name: xgb_d2_lr003_leaf1
+      group: xgboost_tuned
+      learner_kind: xgboost
+      params: {n_estimators: 800, max_depth: 2, learning_rate: 0.03, min_child_weight: 1, reg_lambda: 1.0, subsample: 0.9, colsample_bytree: 1.0, tree_method: hist}
+    - name: xgb_d2_lr005_leaf5
+      group: xgboost_tuned
+      learner_kind: xgboost
+      params: {n_estimators: 600, max_depth: 2, learning_rate: 0.05, min_child_weight: 5, reg_lambda: 1.0, subsample: 0.9, colsample_bytree: 1.0, tree_method: hist}
+    - name: xgb_d3_lr003_leaf5
+      group: xgboost_tuned
+      learner_kind: xgboost
+      params: {n_estimators: 800, max_depth: 3, learning_rate: 0.03, min_child_weight: 5, reg_lambda: 1.0, subsample: 0.9, colsample_bytree: 1.0, tree_method: hist}
+    - name: xgb_d3_lr005_leaf10
+      group: xgboost_tuned
+      learner_kind: xgboost
+      params: {n_estimators: 600, max_depth: 3, learning_rate: 0.05, min_child_weight: 10, reg_lambda: 2.0, subsample: 0.9, colsample_bytree: 1.0, tree_method: hist}
+    - name: xgb_d4_lr003_leaf5
+      group: xgboost_tuned
+      learner_kind: xgboost
+      params: {n_estimators: 800, max_depth: 4, learning_rate: 0.03, min_child_weight: 5, reg_lambda: 2.0, subsample: 0.9, colsample_bytree: 1.0, tree_method: hist}
+    - name: xgb_d5_lr003_leaf10
+      group: xgboost_tuned
+      learner_kind: xgboost
+      params: {n_estimators: 800, max_depth: 5, learning_rate: 0.03, min_child_weight: 10, reg_lambda: 4.0, subsample: 0.9, colsample_bytree: 1.0, tree_method: hist}
+    - {name: extra_f05_leaf1, group: extra_trees, learner_kind: extra_trees, params: {n_estimators: 600, max_features: 0.5, min_samples_leaf: 1}}
+    - {name: extra_f05_leaf2, group: extra_trees, learner_kind: extra_trees, params: {n_estimators: 600, max_features: 0.5, min_samples_leaf: 2}}
+    - {name: extra_f05_leaf5, group: extra_trees, learner_kind: extra_trees, params: {n_estimators: 600, max_features: 0.5, min_samples_leaf: 5}}
+    - {name: extra_f10_leaf1, group: extra_trees, learner_kind: extra_trees, params: {n_estimators: 600, max_features: 1.0, min_samples_leaf: 1}}
+    - {name: extra_f10_leaf2, group: extra_trees, learner_kind: extra_trees, params: {n_estimators: 600, max_features: 1.0, min_samples_leaf: 2}}
+    - {name: extra_f10_leaf5, group: extra_trees, learner_kind: extra_trees, params: {n_estimators: 600, max_features: 1.0, min_samples_leaf: 5}}
+    - {name: tabiclv2_1_m0_diagnostic, group: oracle_target_diagnostic, learner_kind: tabiclv2_1, training_target: m0}
+    - {name: current_xgboost_m0_diagnostic, group: oracle_target_diagnostic, learner_kind: xgboost, training_target: m0}
+
+confirmation:
+  stage: stage3b_tree_simple_confirmation
+  seed_namespace: stage3b_tree_simple_confirmation
+  smoke_replications: 5
+  replications: 50
+  learner_l: [tabiclv2_1, xgboost, oracle]
+  learner_m: [tabiclv2_1, xgboost, xgboost_tuned, extra_trees, oracle]

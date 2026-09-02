@@ -1,11 +1,24 @@
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
 import pandas as pd
 
 from tabdml.stage3b_aggregate import aggregate_dml_records, markdown_table
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--batch-a-root", default="results/stage3b_batch_a_raw")
+    parser.add_argument("--screening-root", default="results/stage3b_screening_raw")
+    parser.add_argument(
+        "--confirmation-root", default="results/stage3b_confirmation_raw"
+    )
+    parser.add_argument("--output-root", default="results/stage3b_analysis")
+    parser.add_argument("--title", default="Stage 3B Tree机制诊断与处理模型筛选结果")
+    return parser.parse_args()
 
 
 def _read_json(root: Path) -> list[dict]:
@@ -16,11 +29,12 @@ def _read_json(root: Path) -> list[dict]:
 
 
 def main() -> int:
-    output = Path("results/stage3b_analysis")
+    args = parse_args()
+    output = Path(args.output_root)
     output.mkdir(parents=True, exist_ok=True)
-    batch_a_records = _read_json(Path("results/stage3b_batch_a_raw"))
-    confirmation_records = _read_json(Path("results/stage3b_confirmation_raw"))
-    screening_records = _read_json(Path("results/stage3b_screening_raw"))
+    batch_a_records = _read_json(Path(args.batch_a_root))
+    confirmation_records = _read_json(Path(args.confirmation_root))
+    screening_records = _read_json(Path(args.screening_root))
 
     batch_a = aggregate_dml_records(batch_a_records, theta0=1.0)
     confirmation = aggregate_dml_records(confirmation_records, theta0=1.0)
@@ -57,7 +71,7 @@ def main() -> int:
         "mean_proxy_error",
     ]
     report = [
-        "# Stage 3B Tree机制诊断与处理模型筛选结果",
+        f"# {args.title}",
         "",
         "## Batch A：现有Stage 3A误差分解",
         "",

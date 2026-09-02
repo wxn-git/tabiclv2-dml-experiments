@@ -51,3 +51,48 @@ def test_batch_a_and_screening_keep_tab_on_one_gpu_worker():
     assert "tabiclv2_1" in batch_a[0].argv
     assert "tabiclv2_8" in screening[0].argv
     assert all("tabiclv2_1" not in command.argv for command in screening[1:])
+
+
+def test_tree_simple_identity_is_forwarded_to_all_workers():
+    batch_a = build_stage3b_batch_a_commands(
+        "python",
+        Path("project"),
+        Path("cache-a"),
+        2,
+        3,
+        stage="stage3b_tree_simple_batch_a",
+        seed_namespace="stage3b_tree_simple_batch_a",
+        scenario="tree_simple",
+    )
+    screening = build_stage3b_screening_commands(
+        "python",
+        Path("project"),
+        Path("screen-raw"),
+        2,
+        3,
+        config_path=Path("configs/stage3b_tree_simple.yaml"),
+    )
+    confirmation = build_stage3b_confirmation_commands(
+        "python",
+        Path("project"),
+        Path("cache-c"),
+        Path("selected.json"),
+        2,
+        3,
+        stage="stage3b_tree_simple_confirmation",
+        seed_namespace="stage3b_tree_simple_confirmation",
+        scenario="tree_simple",
+        n=2000,
+        p=10,
+        folds=5,
+        theta0=1.0,
+    )
+
+    for command in batch_a:
+        assert "stage3b_tree_simple_batch_a" in command.argv
+        assert "tree_simple" in command.argv
+    for command in screening:
+        assert str(Path("configs/stage3b_tree_simple.yaml")) in command.argv
+    for command in confirmation:
+        assert "stage3b_tree_simple_confirmation" in command.argv
+        assert "tree_simple" in command.argv

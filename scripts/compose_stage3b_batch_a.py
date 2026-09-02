@@ -32,6 +32,9 @@ def parse_args():
     parser.add_argument("--n", type=int, default=2000)
     parser.add_argument("--p", type=int, default=10)
     parser.add_argument("--folds", type=int, default=5)
+    parser.add_argument("--stage", default="stage3b_batch_a")
+    parser.add_argument("--seed-namespace", default="stage3_tree_diagnosis")
+    parser.add_argument("--scenario", default="tree")
     return parser.parse_args()
 
 
@@ -43,9 +46,9 @@ def main() -> int:
     for replication in range(args.replications):
         for learner_l, learner_m in PAIRS:
             pair = Stage3BPairSpec(
-                stage="stage3b_batch_a",
-                seed_namespace="stage3_tree_diagnosis",
-                scenario="tree",
+                stage=args.stage,
+                seed_namespace=args.seed_namespace,
+                scenario=args.scenario,
                 n=args.n,
                 p=args.p,
                 replication=replication,
@@ -64,22 +67,25 @@ def main() -> int:
                 cache.read(l_task, expected_length=pair.n),
                 cache.read(m_task, expected_length=pair.n),
             )
-            legacy = Stage3TaskSpec(
-                stage="stage3_tree_diagnosis",
-                seed_namespace="stage3_tree_diagnosis",
-                scenario="tree",
-                n=args.n,
-                p=args.p,
-                replication=replication,
-                learner_l=learner_l,
-                learner_m=learner_m,
-                tabicl_estimators=1,
-            )
-            legacy_path = stage3a_root / f"{legacy.key}.json"
-            if legacy_path.exists():
-                old = json.loads(legacy_path.read_text(encoding="utf-8"))
-                record["stage3a_theta"] = old.get("theta")
-                record["stage3a_theta_difference"] = record["theta"] - float(old["theta"])
+            if args.seed_namespace == "stage3_tree_diagnosis" and args.scenario == "tree":
+                legacy = Stage3TaskSpec(
+                    stage="stage3_tree_diagnosis",
+                    seed_namespace="stage3_tree_diagnosis",
+                    scenario="tree",
+                    n=args.n,
+                    p=args.p,
+                    replication=replication,
+                    learner_l=learner_l,
+                    learner_m=learner_m,
+                    tabicl_estimators=1,
+                )
+                legacy_path = stage3a_root / f"{legacy.key}.json"
+                if legacy_path.exists():
+                    old = json.loads(legacy_path.read_text(encoding="utf-8"))
+                    record["stage3a_theta"] = old.get("theta")
+                    record["stage3a_theta_difference"] = record["theta"] - float(
+                        old["theta"]
+                    )
             output.write(record)
             print(pair.key, record["status"], flush=True)
     return 0

@@ -43,6 +43,9 @@ def build_stage3b_batch_a_commands(
     cache_root: str | PathLike[str],
     cpu_workers: int,
     replications: int,
+    stage: str = "stage3b_batch_a",
+    seed_namespace: str = "stage3_tree_diagnosis",
+    scenario: str = "tree",
 ) -> tuple[WorkerCommand, ...]:
     _validate_workers(cpu_workers, replications)
     script = Path(project_root) / "scripts" / "run_stage3b_cache.py"
@@ -53,6 +56,12 @@ def build_stage3b_batch_a_commands(
         str(cache_root),
         "--replications",
         str(replications),
+        "--stage",
+        stage,
+        "--seed-namespace",
+        seed_namespace,
+        "--scenario",
+        scenario,
     )
     commands = [
         WorkerCommand(
@@ -88,6 +97,7 @@ def build_stage3b_screening_commands(
     output_root: str | PathLike[str],
     cpu_workers: int,
     replications: int,
+    config_path: str | PathLike[str] = "configs/stage3b_tree_publication.yaml",
 ) -> tuple[WorkerCommand, ...]:
     _validate_workers(cpu_workers, replications)
     script = Path(project_root) / "scripts" / "run_stage3b_screen.py"
@@ -98,6 +108,8 @@ def build_stage3b_screening_commands(
         str(output_root),
         "--replications",
         str(replications),
+        "--config",
+        str(config_path),
     )
     commands = [
         WorkerCommand(
@@ -130,6 +142,13 @@ def build_stage3b_confirmation_commands(
     selected_models: str | PathLike[str],
     cpu_workers: int,
     replications: int,
+    stage: str = "stage3b_confirmation",
+    seed_namespace: str = "stage3b_confirmation",
+    scenario: str = "tree",
+    n: int = 2000,
+    p: int = 10,
+    folds: int = 5,
+    theta0: float = 1.0,
 ) -> tuple[WorkerCommand, ...]:
     _validate_workers(cpu_workers, replications)
     root = Path(project_root)
@@ -138,9 +157,19 @@ def build_stage3b_confirmation_commands(
         str(python_executable),
         str(script),
         "--stage",
-        "stage3b_confirmation",
+        stage,
         "--seed-namespace",
-        "stage3b_confirmation",
+        seed_namespace,
+        "--scenario",
+        scenario,
+        "--n",
+        str(n),
+        "--p",
+        str(p),
+        "--folds",
+        str(folds),
+        "--theta0",
+        str(theta0),
         "--cache-root",
         str(cache_root),
         "--replications",
