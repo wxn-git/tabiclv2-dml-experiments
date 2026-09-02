@@ -64,6 +64,9 @@ def simulate_plr(
             + 0.6 * (x2 > 0) * (x3 < 0)
             - 0.5 * (x4 > 0.5)
         )
+    elif scenario == "tree_simple":
+        raw_m = 0.9 * (x0 > 0) - 0.7 * (x1 > 0) + 0.5 * (x2 > 0)
+        raw_g = 0.8 * (x0 > 0) + 0.6 * (x3 > 0) - 0.5 * (x4 > 0)
     elif scenario == "mixed":
         binary = X[:, p - 2]
         category = X[:, p - 1]
@@ -89,4 +92,3 @@ def simulate_plr(
         theta0=float(theta0),
         categorical_indices=categorical_indices,
     )
-
