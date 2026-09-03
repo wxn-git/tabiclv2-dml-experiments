@@ -4,9 +4,10 @@ import json
 import os
 import time
 import traceback
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 from sklearn.model_selection import train_test_split
@@ -19,6 +20,9 @@ from .sharding import belongs_to_shard, validate_shard
 from .stage3b_screen import _params_hash
 from .stage4_config import TreeBenchmarkCell, iter_tree_cells
 from .storage import ResultStore
+
+
+_EXECUTION_PROFILES = frozenset({"full", "fast"})
 
 
 @dataclass(frozen=True)
@@ -34,23 +38,39 @@ class Stage4TuningTask:
     candidate: str
     params: dict[str, Any]
     validation_fraction: float
+    execution_profile: str = "full"
 
     def __post_init__(self) -> None:
         if self.target not in {"l", "m"}:
             raise ValueError("target must be 'l' or 'm'")
         if not 0 < self.validation_fraction < 1:
             raise ValueError("validation_fraction must lie between zero and one")
+        if self.execution_profile not in _EXECUTION_PROFILES:
+            raise ValueError("execution_profile must be 'full' or 'fast'")
+
+    @property
+    def effective_params(self) -> dict[str, Any]:
+        configured = dict(self.params)
+        if self.execution_profile == "fast":
+            configured["n_estimators"] = min(
+                int(configured.get("n_estimators", 20)), 20
+            )
+        return configured
+
+    @property
+    def nominal_config_hash(self) -> str:
+        return _params_hash(self.params)
 
     @property
     def config_hash(self) -> str:
-        return _params_hash(self.params)
+        return _params_hash(self.effective_params)
 
     @property
     def key(self) -> str:
         return (
             f"{self.stage}__{self.panel}__{self.scenario}__n{self.n}__p{self.p}"
             f"__r{self.replication:03d}__target-{self.target}__{self.candidate}"
-            f"__h{self.config_hash}"
+            f"__profile-{self.execution_profile}__h{self.config_hash}"
         )
 
 
@@ -59,13 +79,22 @@ def iter_tuning_tasks(
     replications: int,
     num_shards: int = 1,
     shard_index: int = 0,
+    fast: bool = False,
 ):
     validate_shard(num_shards, shard_index)
     if replications < 1:
         raise ValueError("replications must be at least 1")
     tuning = config["tuning"]
+    raw_targets = tuning["targets"]
+    if isinstance(raw_targets, (str, bytes)) or not isinstance(
+        raw_targets, Sequence
+    ):
+        raise ValueError("tuning requires the exact ordered targets ('l', 'm')")
+    targets = tuple(raw_targets)
+    if targets != ("l", "m"):
+        raise ValueError("tuning requires the exact ordered targets ('l', 'm')")
     for cell in iter_tree_cells(config):
-        for target in tuning["targets"]:
+        for target in targets:
             for candidate in tuning["xgboost_candidates"]:
                 for replication in range(replications):
                     task = Stage4TuningTask(
@@ -80,6 +109,7 @@ def iter_tuning_tasks(
                         candidate=str(candidate["name"]),
                         params=dict(candidate["params"]),
                         validation_fraction=float(tuning["validation_fraction"]),
+                        execution_profile="fast" if fast else "full",
                     )
                     if belongs_to_shard(task.key, num_shards, shard_index):
                         yield task
@@ -90,8 +120,11 @@ def run_tuning_task(
     theta0: float = 1.0,
     output_root: str | Path = "results/stage4_tree_tuning_raw",
     retry_failed: bool = False,
-    fast: bool = False,
+    fast: bool | None = None,
 ) -> dict[str, Any]:
+    task_fast = task.execution_profile == "fast"
+    if fast is not None and fast != task_fast:
+        raise ValueError("fast must match the task execution profile")
     store = ResultStore(output_root)
     result_path = Path(output_root) / f"{task.key}.json"
     if result_path.exists():
@@ -133,7 +166,10 @@ def run_tuning_task(
         "target": task.target,
         "candidate": task.candidate,
         "learner_kind": "xgboost",
-        "params": task.params,
+        "execution_profile": task.execution_profile,
+        "nominal_params": task.params,
+        "nominal_config_hash": task.nominal_config_hash,
+        "params": task.effective_params,
         "config_hash": task.config_hash,
         "validation_fraction": task.validation_fraction,
         "data_seed": data_seed,
@@ -153,7 +189,7 @@ def run_tuning_task(
         response = data.y if task.target == "l" else data.d
         truth = data.l0 if task.target == "l" else data.m0
         model = make_configured_tree_learner(
-            "xgboost", task.params, learner_seed, fast=fast
+            "xgboost", task.effective_params, learner_seed, fast=task_fast
         )
         model.fit(data.X[train], response[train])
         prediction = np.asarray(model.predict(data.X[validation]), dtype=float)
@@ -183,72 +219,212 @@ def run_tuning_task(
     return record
 
 
-def _cell_key(record: Mapping[str, Any]) -> str:
-    return TreeBenchmarkCell(
-        str(record["panel"]),
-        str(record["scenario"]),
-        int(record["n"]),
-        int(record["p"]),
-    ).key
+def _validate_record_metadata(
+    record: Mapping[str, Any], task: Stage4TuningTask
+) -> None:
+    expected_fields = {
+        "task_key": task.key,
+        "stage": task.stage,
+        "seed_namespace": task.seed_namespace,
+        "panel": task.panel,
+        "scenario": task.scenario,
+        "n": task.n,
+        "p": task.p,
+        "replication": task.replication,
+        "target": task.target,
+        "candidate": task.candidate,
+        "learner_kind": "xgboost",
+        "execution_profile": task.execution_profile,
+        "validation_fraction": task.validation_fraction,
+        "nominal_config_hash": task.nominal_config_hash,
+        "config_hash": task.config_hash,
+    }
+    for field, expected in expected_fields.items():
+        if record.get(field) != expected:
+            raise ValueError(f"Invalid tuning record {task.key}: {field} mismatch")
+    if record.get("nominal_params") != task.params:
+        raise ValueError(f"Invalid tuning record {task.key}: nominal_params mismatch")
+    if record.get("params") != task.effective_params:
+        raise ValueError(f"Invalid tuning record {task.key}: params mismatch")
+    params = record.get("params")
+    if (
+        not isinstance(params, Mapping)
+        or _params_hash(dict(params)) != task.config_hash
+    ):
+        raise ValueError(f"Invalid tuning record {task.key}: config_hash mismatch")
+
+
+def _validate_other_profile_record(
+    record: Mapping[str, Any],
+    templates: Mapping[tuple[Any, ...], Stage4TuningTask],
+    execution_profile: str,
+) -> None:
+    if execution_profile not in _EXECUTION_PROFILES:
+        raise ValueError("Invalid tuning record: unknown execution_profile")
+    identity = (
+        record.get("panel"),
+        record.get("scenario"),
+        record.get("n"),
+        record.get("p"),
+        record.get("target"),
+        record.get("candidate"),
+    )
+    template = templates.get(identity)
+    replication = record.get("replication")
+    if (
+        template is None
+        or isinstance(replication, bool)
+        or not isinstance(replication, int)
+        or replication < 0
+    ):
+        raise ValueError("Invalid tuning record from other execution profile")
+    other_task = Stage4TuningTask(
+        stage=template.stage,
+        seed_namespace=template.seed_namespace,
+        panel=template.panel,
+        scenario=template.scenario,
+        n=template.n,
+        p=template.p,
+        replication=replication,
+        target=template.target,
+        candidate=template.candidate,
+        params=template.params,
+        validation_fraction=template.validation_fraction,
+        execution_profile=execution_profile,
+    )
+    _validate_record_metadata(record, other_task)
 
 
 def select_tuned_xgboost(
     records: Sequence[Mapping[str, Any]],
     expected_replications: int,
+    expected_tasks: Sequence[Stage4TuningTask] | None = None,
     expected_candidates: Sequence[str] | None = None,
     expected_cells: Sequence[TreeBenchmarkCell] | None = None,
 ) -> dict[str, Any]:
     if expected_replications < 1:
         raise ValueError("expected_replications must be at least 1")
-    eligible = [record for record in records if record.get("status") == "success"]
-    if not eligible:
-        raise ValueError("No successful Stage 4 tuning records")
+    if expected_tasks is None:
+        raise ValueError("expected_tasks is required for exact selection validation")
+    expected_tasks = tuple(expected_tasks)
+    if not expected_tasks:
+        raise ValueError("expected_tasks must not be empty")
+    if expected_candidates is not None or expected_cells is not None:
+        raise ValueError("expected_tasks replaces expected_candidates and expected_cells")
 
-    grouped: dict[tuple[str, str, str], list[Mapping[str, Any]]] = {}
-    for record in eligible:
-        key = (_cell_key(record), str(record["target"]), str(record["candidate"]))
-        grouped.setdefault(key, []).append(record)
+    expected_by_key = {task.key: task for task in expected_tasks}
+    if len(expected_by_key) != len(expected_tasks):
+        raise ValueError("Expected tuning task keys must be unique")
+    profiles = {task.execution_profile for task in expected_tasks}
+    stages = {task.stage for task in expected_tasks}
+    seed_namespaces = {task.seed_namespace for task in expected_tasks}
+    validation_fractions = {task.validation_fraction for task in expected_tasks}
+    expected_attributes = (
+        profiles,
+        stages,
+        seed_namespaces,
+        validation_fractions,
+    )
+    if any(len(values) != 1 for values in expected_attributes):
+        raise ValueError(
+            "Expected tuning tasks must use one exact stage, seed namespace, "
+            "validation fraction, and execution profile"
+        )
+    expected_profile = next(iter(profiles))
 
-    cell_keys = (
-        [cell.key for cell in expected_cells]
-        if expected_cells is not None
-        else sorted({_cell_key(record) for record in records})
+    cell_keys = list(
+        dict.fromkeys(
+            TreeBenchmarkCell(task.panel, task.scenario, task.n, task.p).key
+            for task in expected_tasks
+        )
     )
-    candidate_names = (
-        [str(candidate) for candidate in expected_candidates]
-        if expected_candidates is not None
-        else sorted({str(record["candidate"]) for record in records})
-    )
+    candidate_names = list(dict.fromkeys(task.candidate for task in expected_tasks))
+    other_profile_templates = {
+        (
+            task.panel,
+            task.scenario,
+            task.n,
+            task.p,
+            task.target,
+            task.candidate,
+        ): task
+        for task in expected_tasks
+    }
     for cell_key in cell_keys:
         for target in ("l", "m"):
             for candidate in candidate_names:
-                if (cell_key, target, candidate) not in grouped:
+                replications = {
+                    task.replication
+                    for task in expected_tasks
+                    if TreeBenchmarkCell(
+                        task.panel, task.scenario, task.n, task.p
+                    ).key
+                    == cell_key
+                    and task.target == target
+                    and task.candidate == candidate
+                }
+                if replications != set(range(expected_replications)):
                     raise ValueError(
-                        f"Incomplete tuning records for {cell_key}/{target}/{candidate}"
+                        f"Incomplete expected tuning universe for {cell_key}/{target}/{candidate}"
                     )
 
-    expected_set = set(range(expected_replications))
+    selected_records: dict[str, Mapping[str, Any]] = {}
+    for record in records:
+        profile = record.get("execution_profile")
+        if profile != expected_profile:
+            _validate_other_profile_record(
+                record,
+                other_profile_templates,
+                str(profile),
+            )
+            continue
+        task_key = str(record.get("task_key"))
+        task = expected_by_key.get(task_key)
+        if task is None:
+            raise ValueError(f"Invalid tuning record: unexpected task_key {task_key}")
+        if task_key in selected_records:
+            raise ValueError(f"Invalid tuning record: duplicate task_key {task_key}")
+        if record.get("status") != "success":
+            raise ValueError(f"Failed tuning record in expected profile: {task_key}")
+        _validate_record_metadata(record, task)
+        for metric in (
+            "validation_observed_mse",
+            "validation_truth_mse_diagnostic",
+        ):
+            value = record.get(metric)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not np.isfinite(value)
+            ):
+                raise ValueError(f"Invalid tuning record {task_key}: {metric}")
+        selected_records[task_key] = record
+
+    missing = set(expected_by_key).difference(selected_records)
+    if missing:
+        raise ValueError(
+            f"Incomplete tuning records: missing {len(missing)} expected task keys"
+        )
+
+    grouped: dict[tuple[str, str, str], list[Mapping[str, Any]]] = {}
+    for task_key, record in selected_records.items():
+        task = expected_by_key[task_key]
+        key = (
+            TreeBenchmarkCell(task.panel, task.scenario, task.n, task.p).key,
+            task.target,
+            task.candidate,
+        )
+        grouped.setdefault(key, []).append(record)
+
     ranked: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for (cell_key, target, candidate), values in grouped.items():
-        replications = [int(value["replication"]) for value in values]
-        if (
-            len(replications) != expected_replications
-            or set(replications) != expected_set
-        ):
-            raise ValueError(
-                f"Incomplete tuning records for {cell_key}/{target}/{candidate}"
-            )
-        configurations = {
-            (str(value["config_hash"]), _params_hash(dict(value["params"])))
-            for value in values
-        }
-        if len(configurations) != 1:
-            raise ValueError(
-                f"Inconsistent tuning configuration for {cell_key}/{target}/{candidate}"
-            )
+        values = sorted(values, key=lambda value: int(value["replication"]))
         summary = {
             "candidate": candidate,
             "learner_kind": "xgboost",
+            "execution_profile": expected_profile,
+            "nominal_params": dict(values[0]["nominal_params"]),
+            "nominal_config_hash": str(values[0]["nominal_config_hash"]),
             "params": dict(values[0]["params"]),
             "config_hash": str(values[0]["config_hash"]),
             "replications": expected_replications,
@@ -282,6 +458,7 @@ def select_tuned_xgboost(
             )
 
     return {
+        "execution_profile": expected_profile,
         "selection_metric_l": "mean_validation_y_mse",
         "selection_metric_m": "mean_validation_d_mse",
         "expected_replications": expected_replications,
@@ -293,12 +470,14 @@ def write_tuned_xgboost(
     records: Sequence[Mapping[str, Any]],
     output_path: str | Path,
     expected_replications: int,
+    expected_tasks: Sequence[Stage4TuningTask] | None = None,
     expected_candidates: Sequence[str] | None = None,
     expected_cells: Sequence[TreeBenchmarkCell] | None = None,
 ) -> dict[str, Any]:
     selected = select_tuned_xgboost(
         records,
         expected_replications,
+        expected_tasks=expected_tasks,
         expected_candidates=expected_candidates,
         expected_cells=expected_cells,
     )

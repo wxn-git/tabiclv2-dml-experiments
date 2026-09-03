@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 
 import pytest
+import yaml
 
 from scripts import run_stage4_tuning
 from tabdml.stage4_config import load_stage4_config
@@ -18,7 +19,7 @@ def test_stage4_tuning_cli_fast_run_uses_valid_config_and_narrowed_tasks(
     monkeypatch, tmp_path
 ):
     config = load_stage4_config(CONFIG)
-    all_tasks = tuple(iter_tuning_tasks(config, replications=1))
+    all_tasks = tuple(iter_tuning_tasks(config, replications=1, fast=True))
     first = all_tasks[0]
     tasks = tuple(
         task
@@ -36,7 +37,7 @@ def test_stage4_tuning_cli_fast_run_uses_valid_config_and_narrowed_tasks(
     monkeypatch.setattr(
         run_stage4_tuning,
         "iter_tuning_tasks",
-        lambda config, replications: iter(tasks),
+        lambda config, replications, fast: iter(tasks),
     )
     monkeypatch.setattr(
         sys,
@@ -67,6 +68,13 @@ def test_stage4_tuning_cli_fast_run_uses_valid_config_and_narrowed_tasks(
     assert all("validation_observed_mse" in record for record in records)
     assert all("validation_truth_mse_diagnostic" in record for record in records)
     selected = json.loads(selected_output.read_text(encoding="utf-8"))
+    cell_key = f"{first.panel}__{first.scenario}__n{first.n}__p{first.p}"
+    winner_l = selected["cells"][cell_key]["l"]
+    assert selected["execution_profile"] == "fast"
+    assert winner_l["execution_profile"] == "fast"
+    assert winner_l["nominal_params"]["n_estimators"] == 800
+    assert winner_l["params"]["n_estimators"] == 20
+    assert winner_l["config_hash"] == first.config_hash
     assert selected["selection_metric_l"] == "mean_validation_y_mse"
     assert selected["selection_metric_m"] == "mean_validation_d_mse"
     assert "truth" not in selected["selection_metric_l"]
@@ -100,6 +108,8 @@ def test_stage4_tuning_cli_refuses_selection_when_an_expected_cell_is_missing(
             {
                 "task_key": task.key,
                 "status": "success",
+                "stage": task.stage,
+                "seed_namespace": task.seed_namespace,
                 "panel": task.panel,
                 "scenario": task.scenario,
                 "n": task.n,
@@ -107,8 +117,13 @@ def test_stage4_tuning_cli_refuses_selection_when_an_expected_cell_is_missing(
                 "replication": task.replication,
                 "target": task.target,
                 "candidate": task.candidate,
-                "params": task.params,
+                "learner_kind": "xgboost",
+                "execution_profile": task.execution_profile,
+                "nominal_params": task.params,
+                "nominal_config_hash": task.nominal_config_hash,
+                "params": task.effective_params,
                 "config_hash": task.config_hash,
+                "validation_fraction": task.validation_fraction,
                 "validation_observed_mse": 1.0,
                 "validation_truth_mse_diagnostic": 2.0,
             }
@@ -118,7 +133,7 @@ def test_stage4_tuning_cli_refuses_selection_when_an_expected_cell_is_missing(
     monkeypatch.setattr(
         run_stage4_tuning,
         "iter_tuning_tasks",
-        lambda config, replications: iter(tasks),
+        lambda config, replications, fast: iter(tasks),
     )
     monkeypatch.setattr(
         run_stage4_tuning,
@@ -146,3 +161,33 @@ def test_stage4_tuning_cli_refuses_selection_when_an_expected_cell_is_missing(
         run_stage4_tuning.main()
 
     assert not selected_output.exists()
+
+
+def test_stage4_tuning_cli_rejects_reversed_targets(monkeypatch, tmp_path):
+    config = load_stage4_config(CONFIG)
+    config["tuning"]["targets"] = ["m", "l"]
+    config_path = tmp_path / "stage4-reversed-targets.yaml"
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    monkeypatch.setattr(
+        run_stage4_tuning,
+        "run_tuning_task",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("invalid targets must be rejected before execution")
+        ),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_stage4_tuning.py",
+            "--config",
+            str(config_path),
+            "--output-root",
+            str(tmp_path / "raw"),
+            "--replications",
+            "1",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="exact ordered targets"):
+        run_stage4_tuning.main()

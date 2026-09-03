@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 from tabdml.sharding import belongs_to_shard, validate_shard
-from tabdml.stage4_config import TreeBenchmarkCell, load_stage4_config
+from tabdml.stage4_config import load_stage4_config
 from tabdml.stage4_tuning import (
     iter_tuning_tasks,
     run_tuning_task,
@@ -43,7 +43,7 @@ def main() -> int:
         if args.replications is None
         else args.replications
     )
-    all_tasks = tuple(iter_tuning_tasks(config, replications))
+    all_tasks = tuple(iter_tuning_tasks(config, replications, fast=args.fast))
 
     for task in all_tasks:
         if not belongs_to_shard(task.key, args.num_shards, args.shard_index):
@@ -58,17 +58,11 @@ def main() -> int:
         print(task.key, record["status"], flush=True)
 
     if args.select:
-        cells = {}
-        for task in all_tasks:
-            cell = TreeBenchmarkCell(task.panel, task.scenario, task.n, task.p)
-            cells[cell.key] = cell
-        candidates = tuple(dict.fromkeys(task.candidate for task in all_tasks))
         write_tuned_xgboost(
             ResultStore(args.output_root).read_all(),
             args.selected_output,
             expected_replications=replications,
-            expected_candidates=candidates,
-            expected_cells=tuple(cells.values()),
+            expected_tasks=all_tasks,
         )
     return 0
 

@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import numpy as np
@@ -27,25 +28,90 @@ def config():
     return load_stage4_config(CONFIG)
 
 
-def _record(target, candidate, observed, diagnostic, replication=0):
+def _candidate_params(candidate):
     return {
+        "n_estimators": 800,
+        "max_depth": 1 if candidate == "a" else 2,
+    }
+
+
+def _selection_task(
+    target,
+    candidate,
+    replication=0,
+    execution_profile="full",
+    cell=CELL,
+):
+    return Stage4TuningTask(
+        stage="stage4_tree_tuning",
+        seed_namespace="stage4_tree_tuning",
+        panel=cell.panel,
+        scenario=cell.scenario,
+        n=cell.n,
+        p=cell.p,
+        replication=replication,
+        target=target,
+        candidate=candidate,
+        params=_candidate_params(candidate),
+        validation_fraction=0.25,
+        execution_profile=execution_profile,
+    )
+
+
+def _expected_tasks(
+    candidates=("a", "b"),
+    replications=1,
+    execution_profile="full",
+    cells=(CELL,),
+):
+    return tuple(
+        _selection_task(target, candidate, replication, execution_profile, cell)
+        for cell in cells
+        for target in ("l", "m")
+        for candidate in candidates
+        for replication in range(replications)
+    )
+
+
+def _record(
+    target,
+    candidate,
+    observed,
+    diagnostic,
+    replication=0,
+    execution_profile="full",
+):
+    task = _selection_task(
+        target,
+        candidate,
+        replication=replication,
+        execution_profile=execution_profile,
+    )
+    return {
+        "task_key": task.key,
         "status": "success",
-        "stage": "stage4_tree_tuning",
-        "panel": CELL.panel,
-        "scenario": CELL.scenario,
-        "n": CELL.n,
-        "p": CELL.p,
-        "replication": replication,
-        "target": target,
-        "candidate": candidate,
-        "params": {"max_depth": 1 if candidate == "a" else 2},
-        "config_hash": f"{candidate}-hash",
+        "stage": task.stage,
+        "seed_namespace": task.seed_namespace,
+        "panel": task.panel,
+        "scenario": task.scenario,
+        "n": task.n,
+        "p": task.p,
+        "replication": task.replication,
+        "target": task.target,
+        "candidate": task.candidate,
+        "learner_kind": "xgboost",
+        "execution_profile": task.execution_profile,
+        "nominal_params": task.params,
+        "nominal_config_hash": task.nominal_config_hash,
+        "params": task.effective_params,
+        "config_hash": task.config_hash,
+        "validation_fraction": task.validation_fraction,
         "validation_observed_mse": observed,
         "validation_truth_mse_diagnostic": diagnostic,
     }
 
 
-def _task(target):
+def _task(target, execution_profile="full"):
     return Stage4TuningTask(
         stage="stage4_tree_tuning",
         seed_namespace="stage4_tree_tuning",
@@ -58,13 +124,14 @@ def _task(target):
         candidate="tiny",
         params={"n_estimators": 2, "max_depth": 1},
         validation_fraction=0.25,
+        execution_profile=execution_profile,
     )
 
 
-def _data():
-    index = np.arange(8, dtype=float)
+def _data(n=8, p=2):
+    index = np.arange(n, dtype=float)
     return SimulatedData(
-        X=np.column_stack((index, -index)),
+        X=np.tile(index[:, None], (1, p)),
         y=100.0 + index,
         d=200.0 + index,
         l0=300.0 + index,
@@ -101,6 +168,20 @@ def test_tuning_enumerates_cell_target_candidate_replication_product(config):
     assert all(task.config_hash in task.key for task in tasks)
 
 
+@pytest.mark.parametrize(
+    "targets",
+    [("l",), ("l", "l"), ("m", "l"), ("l", "m", "g"), "lm"],
+)
+def test_tuning_rejects_any_target_sequence_except_ordered_l_m(config, targets):
+    mutated = deepcopy(config)
+    mutated["tuning"]["targets"] = (
+        targets if isinstance(targets, str) else list(targets)
+    )
+
+    with pytest.raises(ValueError, match="exact ordered targets"):
+        tuple(iter_tuning_tasks(mutated, replications=1))
+
+
 def test_tuning_shards_the_deterministic_task_keys(config):
     all_tasks = tuple(iter_tuning_tasks(config, replications=1))
     shards = [
@@ -121,6 +202,49 @@ def test_tuning_shards_the_deterministic_task_keys(config):
     assert sum(len(shard) for shard in shards) == len(all_tasks)
     for shard_index, shard in enumerate(shards):
         assert all(belongs_to_shard(task.key, 4, shard_index) for task in shard)
+
+
+def test_fast_and_full_tasks_have_distinct_effective_identity(config):
+    full = next(iter_tuning_tasks(config, replications=1, fast=False))
+    smoke = next(iter_tuning_tasks(config, replications=1, fast=True))
+
+    assert full.key != smoke.key
+    assert full.execution_profile == "full"
+    assert smoke.execution_profile == "fast"
+    assert full.effective_params["n_estimators"] == 800
+    assert smoke.effective_params["n_estimators"] == 20
+    assert full.config_hash != smoke.config_hash
+
+
+def test_fast_smoke_record_cannot_resume_or_skip_the_full_task(
+    monkeypatch, tmp_path, config
+):
+    full = next(iter_tuning_tasks(config, replications=1, fast=False))
+    smoke = next(iter_tuning_tasks(config, replications=1, fast=True))
+    fitted_targets = []
+    monkeypatch.setattr(
+        "tabdml.stage4_tuning.simulate_plr",
+        lambda scenario, n, p, seed, theta0: _data(n, p),
+    )
+    monkeypatch.setattr(
+        "tabdml.stage4_tuning.make_configured_tree_learner",
+        lambda *args, **kwargs: _RecordingModel(fitted_targets),
+    )
+
+    smoke_record = run_tuning_task(smoke, output_root=tmp_path)
+    full_record = run_tuning_task(full, output_root=tmp_path)
+
+    assert smoke_record["status"] == "success"
+    assert full_record["status"] == "success"
+    assert len(fitted_targets) == 2
+    assert len(tuple(tmp_path.glob("*.json"))) == 2
+    assert smoke_record["execution_profile"] == "fast"
+    assert smoke_record["params"]["n_estimators"] == 20
+    assert smoke_record["nominal_params"]["n_estimators"] == 800
+    assert smoke_record["config_hash"] == smoke.config_hash
+    assert full_record["execution_profile"] == "full"
+    assert full_record["params"]["n_estimators"] == 800
+    assert full_record["config_hash"] == full.config_hash
 
 
 @pytest.mark.parametrize(
@@ -145,7 +269,11 @@ def test_tuning_fit_uses_only_the_observable_target(
         make_model,
     )
 
-    record = run_tuning_task(_task(target), output_root=tmp_path, fast=True)
+    record = run_tuning_task(
+        _task(target, execution_profile="fast"),
+        output_root=tmp_path,
+        fast=True,
+    )
 
     assert record["status"] == "success"
     assert len(fitted_targets) == 1
@@ -167,7 +295,11 @@ def test_l_and_m_winners_use_observable_losses_independently():
         _record("m", "b", observed=1.5, diagnostic=9.0),
     ]
 
-    selected = select_tuned_xgboost(records, expected_replications=1)
+    selected = select_tuned_xgboost(
+        records,
+        expected_replications=1,
+        expected_tasks=_expected_tasks(),
+    )
 
     assert selected["cells"][CELL_KEY]["l"]["candidate"] == "a"
     assert selected["cells"][CELL_KEY]["m"]["candidate"] == "b"
@@ -182,7 +314,11 @@ def test_selection_rejects_incomplete_candidate_replication_groups():
     ]
 
     with pytest.raises(ValueError, match="Incomplete tuning records"):
-        select_tuned_xgboost(records, expected_replications=2)
+        select_tuned_xgboost(
+            records,
+            expected_replications=2,
+            expected_tasks=_expected_tasks(candidates=("a",), replications=2),
+        )
 
 
 def test_selection_rejects_an_expected_candidate_with_no_records():
@@ -195,8 +331,7 @@ def test_selection_rejects_an_expected_candidate_with_no_records():
         select_tuned_xgboost(
             records,
             expected_replications=1,
-            expected_candidates=("a", "b"),
-            expected_cells=(CELL,),
+            expected_tasks=_expected_tasks(),
         )
 
 
@@ -208,8 +343,88 @@ def test_selection_rejects_mixed_configurations_within_a_candidate_group():
     ]
     records[1]["config_hash"] = "different-hash"
 
-    with pytest.raises(ValueError, match="Inconsistent tuning configuration"):
-        select_tuned_xgboost(records, expected_replications=2)
+    with pytest.raises(ValueError, match="Invalid tuning record"):
+        select_tuned_xgboost(
+            records,
+            expected_replications=2,
+            expected_tasks=_expected_tasks(candidates=("a",), replications=2),
+        )
+
+
+@pytest.mark.parametrize("field", ["stage", "task_key", "config_hash"])
+def test_selection_rejects_forged_expected_record_fields(field):
+    records = [
+        _record(target, "a", observed=1.0, diagnostic=2.0)
+        for target in ("l", "m")
+    ]
+    records[0][field] = f"forged-{field}"
+
+    with pytest.raises(ValueError, match="Invalid tuning record"):
+        select_tuned_xgboost(
+            records,
+            expected_replications=1,
+            expected_tasks=_expected_tasks(candidates=("a",)),
+        )
+
+
+def test_selection_rejects_failed_record_from_the_expected_profile():
+    records = [
+        _record(target, "a", observed=1.0, diagnostic=2.0)
+        for target in ("l", "m")
+    ]
+    records[0]["status"] = "failed"
+
+    with pytest.raises(ValueError, match="Failed tuning record"):
+        select_tuned_xgboost(
+            records,
+            expected_replications=1,
+            expected_tasks=_expected_tasks(candidates=("a",)),
+        )
+
+
+def test_selection_isolates_exact_fast_and_full_task_universes():
+    full_records = [
+        _record(
+            target,
+            candidate,
+            observed=1.0 if candidate == "a" else 2.0,
+            diagnostic=9.0 if candidate == "a" else 0.0,
+            replication=replication,
+        )
+        for target in ("l", "m")
+        for candidate in ("a", "b")
+        for replication in (0, 1)
+    ]
+    fast_records = [
+        _record(
+            target,
+            candidate,
+            observed=3.0 if candidate == "a" else 0.5,
+            diagnostic=0.0 if candidate == "a" else 9.0,
+            execution_profile="fast",
+        )
+        for target in ("l", "m")
+        for candidate in ("a", "b")
+    ]
+    mixed_store = full_records + fast_records
+
+    selected_full = select_tuned_xgboost(
+        mixed_store,
+        expected_replications=2,
+        expected_tasks=_expected_tasks(replications=2),
+    )
+    selected_fast = select_tuned_xgboost(
+        mixed_store,
+        expected_replications=1,
+        expected_tasks=_expected_tasks(execution_profile="fast"),
+    )
+
+    assert selected_full["execution_profile"] == "full"
+    assert selected_fast["execution_profile"] == "fast"
+    assert selected_full["cells"][CELL_KEY]["l"]["candidate"] == "a"
+    assert selected_fast["cells"][CELL_KEY]["l"]["candidate"] == "b"
+    assert selected_full["cells"][CELL_KEY]["l"]["params"]["n_estimators"] == 800
+    assert selected_fast["cells"][CELL_KEY]["l"]["params"]["n_estimators"] == 20
 
 
 def test_failed_result_is_resumed_only_with_retry_failed(monkeypatch, tmp_path):
@@ -244,8 +459,7 @@ def test_write_tuned_xgboost_atomically_freezes_complete_groups(tmp_path):
         records,
         output,
         expected_replications=1,
-        expected_candidates=("a", "b"),
-        expected_cells=(CELL,),
+        expected_tasks=_expected_tasks(),
     )
 
     assert json.loads(output.read_text(encoding="utf-8")) == selected
@@ -264,8 +478,7 @@ def test_write_tuned_xgboost_does_not_create_output_for_incomplete_groups(tmp_pa
             records,
             output,
             expected_replications=1,
-            expected_candidates=("a", "b"),
-            expected_cells=(CELL,),
+            expected_tasks=_expected_tasks(),
         )
 
     assert not output.exists()
