@@ -16,7 +16,11 @@ from tabdml.stage4_experiment import (
     build_stage4_nuisance_spec,
     stage4_configuration_fingerprint,
 )
-from tabdml.stage4_tuning import derive_tuning_seeds, iter_tuning_tasks
+from tabdml.stage4_tuning import (
+    derive_tuning_seeds,
+    iter_tuning_tasks,
+    tuning_task_universe_fingerprint,
+)
 from tabdml.storage import ResultStore
 
 
@@ -246,6 +250,11 @@ def test_stage4_tuning_cli_fast_run_uses_valid_config_and_narrowed_tasks(
     cell_key = f"{first.panel}__{first.scenario}__n{first.n}__p{first.p}"
     winner_l = selected["cells"][cell_key]["l"]
     assert selected["execution_profile"] == "fast"
+    assert selected["tuning_stage"] == first.stage
+    assert selected["tuning_seed_namespace"] == first.seed_namespace
+    assert selected["tuning_run_fingerprint"] == (
+        tuning_task_universe_fingerprint(tasks, 1)
+    )
     assert winner_l["execution_profile"] == "fast"
     assert winner_l["nominal_params"]["n_estimators"] == 800
     assert winner_l["params"]["n_estimators"] == 20

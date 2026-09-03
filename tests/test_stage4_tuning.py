@@ -14,6 +14,8 @@ from tabdml.stage4_tuning import (
     iter_tuning_tasks,
     run_tuning_task,
     select_tuned_xgboost,
+    tuning_run_fingerprint,
+    tuning_task_universe_fingerprint,
     write_tuned_xgboost,
 )
 from tabdml.storage import ResultStore
@@ -216,6 +218,36 @@ def test_fast_and_full_tasks_have_distinct_effective_identity(config):
     assert full.effective_params["n_estimators"] == 800
     assert smoke.effective_params["n_estimators"] == 20
     assert full.config_hash != smoke.config_hash
+
+
+def test_tuning_fingerprint_is_canonical_and_binds_run_provenance(config):
+    full_tasks = tuple(iter_tuning_tasks(config, replications=1))
+    reversed_tasks = tuple(reversed(full_tasks))
+    fast_tasks = tuple(iter_tuning_tasks(config, replications=1, fast=True))
+    changed_stage = deepcopy(config)
+    changed_stage["tuning"]["stage"] = "stage4_tree_tuning_v2"
+    changed_namespace = deepcopy(config)
+    changed_namespace["tuning"]["seed_namespace"] = "stage4_tree_tuning_v2"
+
+    full_fingerprint = tuning_task_universe_fingerprint(full_tasks, 1)
+
+    assert full_fingerprint == tuning_task_universe_fingerprint(reversed_tasks, 1)
+    assert full_fingerprint == tuning_run_fingerprint(
+        config,
+        replications=1,
+        execution_profile="full",
+    )
+    assert full_fingerprint != tuning_task_universe_fingerprint(fast_tasks, 1)
+    assert full_fingerprint != tuning_run_fingerprint(
+        changed_stage,
+        replications=1,
+        execution_profile="full",
+    )
+    assert full_fingerprint != tuning_run_fingerprint(
+        changed_namespace,
+        replications=1,
+        execution_profile="full",
+    )
 
 
 def test_fast_smoke_record_cannot_resume_or_skip_the_full_task(
@@ -507,6 +539,11 @@ def test_write_tuned_xgboost_atomically_freezes_complete_groups(tmp_path):
     )
 
     assert json.loads(output.read_text(encoding="utf-8")) == selected
+    assert selected["tuning_stage"] == "stage4_tree_tuning"
+    assert selected["tuning_seed_namespace"] == "stage4_tree_tuning"
+    assert selected["tuning_run_fingerprint"] == (
+        tuning_task_universe_fingerprint(_expected_tasks(), 1)
+    )
     assert not output.with_suffix(".json.tmp").exists()
 
 

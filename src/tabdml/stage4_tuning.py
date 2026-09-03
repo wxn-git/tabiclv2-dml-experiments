@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -309,6 +310,163 @@ def _validate_other_profile_record(
     _validate_record_metadata(record, other_task)
 
 
+def _canonical_tuning_run_manifest(
+    expected_tasks: Sequence[Stage4TuningTask],
+    expected_replications: int,
+) -> dict[str, Any]:
+    if (
+        isinstance(expected_replications, bool)
+        or not isinstance(expected_replications, int)
+        or expected_replications < 1
+    ):
+        raise ValueError("expected_replications must be at least 1")
+    tasks = tuple(expected_tasks)
+    if not tasks:
+        raise ValueError("expected_tasks must not be empty")
+
+    task_keys = [task.key for task in tasks]
+    if len(task_keys) != len(set(task_keys)):
+        raise ValueError("Expected tuning task keys must be unique")
+
+    profiles = {task.execution_profile for task in tasks}
+    stages = {task.stage for task in tasks}
+    seed_namespaces = {task.seed_namespace for task in tasks}
+    validation_fractions = {task.validation_fraction for task in tasks}
+    if any(
+        len(values) != 1
+        for values in (profiles, stages, seed_namespaces, validation_fractions)
+    ):
+        raise ValueError(
+            "Expected tuning tasks must use one exact stage, seed namespace, "
+            "validation fraction, and execution profile"
+        )
+
+    cells = sorted(
+        {(task.panel, task.scenario, task.n, task.p) for task in tasks},
+        key=lambda cell: (cell[0], cell[1], cell[2], cell[3]),
+    )
+    targets = ("l", "m")
+    candidate_specs: dict[str, dict[str, Any]] = {}
+    for task in tasks:
+        candidate_spec = {
+            "candidate": task.candidate,
+            "nominal_params": dict(task.params),
+            "nominal_config_hash": task.nominal_config_hash,
+            "effective_params": task.effective_params,
+            "effective_config_hash": task.config_hash,
+        }
+        previous = candidate_specs.setdefault(task.candidate, candidate_spec)
+        if previous != candidate_spec:
+            raise ValueError(
+                f"Expected tuning candidate {task.candidate} has mixed configurations"
+            )
+    candidate_names = sorted(candidate_specs)
+
+    expected_identities = {
+        (*cell, target, candidate, replication)
+        for cell in cells
+        for target in targets
+        for candidate in candidate_names
+        for replication in range(expected_replications)
+    }
+    actual_identities = {
+        (
+            task.panel,
+            task.scenario,
+            task.n,
+            task.p,
+            task.target,
+            task.candidate,
+            task.replication,
+        )
+        for task in tasks
+    }
+    if len(actual_identities) != len(tasks) or actual_identities != expected_identities:
+        raise ValueError(
+            "Expected tuning tasks must form the exact cell, target, candidate, "
+            "and replication product"
+        )
+
+    task_manifest = []
+    for task in sorted(tasks, key=lambda value: value.key):
+        task_manifest.append(
+            {
+                "task_key": task.key,
+                "stage": task.stage,
+                "seed_namespace": task.seed_namespace,
+                "execution_profile": task.execution_profile,
+                "panel": task.panel,
+                "scenario": task.scenario,
+                "n": task.n,
+                "p": task.p,
+                "replication": task.replication,
+                "target": task.target,
+                "candidate": task.candidate,
+                "nominal_params": dict(task.params),
+                "nominal_config_hash": task.nominal_config_hash,
+                "effective_params": task.effective_params,
+                "effective_config_hash": task.config_hash,
+                "validation_fraction": task.validation_fraction,
+                **derive_tuning_seeds(task),
+            }
+        )
+
+    return {
+        "schema": "stage4_tuning_run_v1",
+        "stage": next(iter(stages)),
+        "seed_namespace": next(iter(seed_namespaces)),
+        "execution_profile": next(iter(profiles)),
+        "replications": expected_replications,
+        "validation_fraction": next(iter(validation_fractions)),
+        "cells": [
+            {"panel": panel, "scenario": scenario, "n": n, "p": p}
+            for panel, scenario, n, p in cells
+        ],
+        "targets": list(targets),
+        "candidates": [candidate_specs[name] for name in candidate_names],
+        "tasks": task_manifest,
+    }
+
+
+def tuning_task_universe_fingerprint(
+    expected_tasks: Sequence[Stage4TuningTask],
+    expected_replications: int,
+) -> str:
+    manifest = _canonical_tuning_run_manifest(
+        expected_tasks,
+        expected_replications,
+    )
+    return _tuning_run_manifest_fingerprint(manifest)
+
+
+def _tuning_run_manifest_fingerprint(manifest: Mapping[str, Any]) -> str:
+    payload = json.dumps(
+        manifest,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def tuning_run_fingerprint(
+    config: Mapping[str, Any],
+    replications: int,
+    execution_profile: str = "full",
+) -> str:
+    if execution_profile not in _EXECUTION_PROFILES:
+        raise ValueError("execution_profile must be 'full' or 'fast'")
+    expected_tasks = tuple(
+        iter_tuning_tasks(
+            config,
+            replications,
+            fast=execution_profile == "fast",
+        )
+    )
+    return tuning_task_universe_fingerprint(expected_tasks, replications)
+
+
 def select_tuned_xgboost(
     records: Sequence[Mapping[str, Any]],
     expected_replications: int,
@@ -325,6 +483,12 @@ def select_tuned_xgboost(
         raise ValueError("expected_tasks must not be empty")
     if expected_candidates is not None or expected_cells is not None:
         raise ValueError("expected_tasks replaces expected_candidates and expected_cells")
+
+    tuning_run_manifest = _canonical_tuning_run_manifest(
+        expected_tasks,
+        expected_replications,
+    )
+    tuning_run_identity = _tuning_run_manifest_fingerprint(tuning_run_manifest)
 
     expected_by_key = {task.key: task for task in expected_tasks}
     if len(expected_by_key) != len(expected_tasks):
@@ -472,6 +636,9 @@ def select_tuned_xgboost(
             )
 
     return {
+        "tuning_stage": tuning_run_manifest["stage"],
+        "tuning_seed_namespace": tuning_run_manifest["seed_namespace"],
+        "tuning_run_fingerprint": tuning_run_identity,
         "execution_profile": expected_profile,
         "selection_metric_l": "mean_validation_y_mse",
         "selection_metric_m": "mean_validation_d_mse",
