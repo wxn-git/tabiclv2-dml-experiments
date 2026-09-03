@@ -85,6 +85,7 @@ _EXPECTED_XGBOOST_CANDIDATES = {
         "tree_method": "hist",
     },
 }
+_EXPECTED_XGBOOST_CANDIDATE_NAMES = tuple(_EXPECTED_XGBOOST_CANDIDATES)
 _REQUIRED_TOP_LEVEL = frozenset(
     {
         "theta0",
@@ -266,9 +267,10 @@ def _validate_stage4_config(config: Mapping[str, Any]) -> None:
         candidate_params[name] = params
     if len(candidate_names) != len(set(candidate_names)):
         raise ValueError("XGBoost candidate names must be unique")
-    if set(candidate_names) != set(_EXPECTED_XGBOOST_CANDIDATES):
+    if tuple(candidate_names) != _EXPECTED_XGBOOST_CANDIDATE_NAMES:
         raise ValueError(
-            "tuning requires the exact six XGBoost candidate names"
+            "tuning requires the exact six XGBoost candidate names "
+            "in the prescribed order"
         )
     for name, expected_params in _EXPECTED_XGBOOST_CANDIDATES.items():
         if dict(candidate_params[name]) != expected_params:

@@ -180,6 +180,15 @@ def test_xgboost_candidate_names_must_be_the_exact_prescribed_six(mutation):
         iter_tree_cells(config)
 
 
+def test_xgboost_candidates_must_remain_in_the_prescribed_order():
+    config = load_stage4_config(CONFIG)
+    candidates = config["tuning"]["xgboost_candidates"]
+    candidates[0], candidates[1] = candidates[1], candidates[0]
+
+    with pytest.raises(ValueError, match="prescribed order"):
+        iter_tree_cells(config)
+
+
 @pytest.mark.parametrize("mutation", ["changed", "missing", "extra"])
 def test_xgboost_candidate_parameters_must_match_exactly(mutation):
     config = load_stage4_config(CONFIG)
