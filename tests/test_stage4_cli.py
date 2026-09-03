@@ -7,7 +7,7 @@ import yaml
 
 from scripts import run_stage4_tuning
 from tabdml.stage4_config import load_stage4_config
-from tabdml.stage4_tuning import iter_tuning_tasks
+from tabdml.stage4_tuning import derive_tuning_seeds, iter_tuning_tasks
 from tabdml.storage import ResultStore
 
 
@@ -124,6 +124,7 @@ def test_stage4_tuning_cli_refuses_selection_when_an_expected_cell_is_missing(
                 "params": task.effective_params,
                 "config_hash": task.config_hash,
                 "validation_fraction": task.validation_fraction,
+                **derive_tuning_seeds(task),
                 "validation_observed_mse": 1.0,
                 "validation_truth_mse_diagnostic": 2.0,
             }

@@ -74,6 +74,30 @@ class Stage4TuningTask:
         )
 
 
+def derive_tuning_seeds(task: Stage4TuningTask) -> dict[str, int]:
+    return {
+        "data_seed": derive_seed(
+            task.seed_namespace,
+            task.panel,
+            task.scenario,
+            task.n,
+            task.p,
+            task.replication,
+            "data",
+        ),
+        "split_seed": derive_seed(
+            task.seed_namespace,
+            task.panel,
+            task.scenario,
+            task.n,
+            task.p,
+            task.replication,
+            "tuning_split",
+        ),
+        "learner_seed": derive_seed(task.key, "learner"),
+    }
+
+
 def iter_tuning_tasks(
     config: Mapping[str, Any],
     replications: int,
@@ -129,30 +153,16 @@ def run_tuning_task(
     result_path = Path(output_root) / f"{task.key}.json"
     if result_path.exists():
         with result_path.open("r", encoding="utf-8") as handle:
-            previous_status = json.load(handle).get("status")
-        if previous_status == "success" or not retry_failed:
+            previous = json.load(handle)
+        previous_status = previous.get("status")
+        if previous_status == "success":
+            _validate_record_metadata(previous, task)
+            return {"task_key": task.key, "status": "skipped"}
+        if not retry_failed:
             return {"task_key": task.key, "status": "skipped"}
 
     started = time.perf_counter()
-    data_seed = derive_seed(
-        task.seed_namespace,
-        task.panel,
-        task.scenario,
-        task.n,
-        task.p,
-        task.replication,
-        "data",
-    )
-    split_seed = derive_seed(
-        task.seed_namespace,
-        task.panel,
-        task.scenario,
-        task.n,
-        task.p,
-        task.replication,
-        "tuning_split",
-    )
-    learner_seed = derive_seed(task.key, "learner")
+    seeds = derive_tuning_seeds(task)
     metric_name = "validation_y_mse" if task.target == "l" else "validation_d_mse"
     base = {
         "task_key": task.key,
@@ -172,24 +182,27 @@ def run_tuning_task(
         "params": task.effective_params,
         "config_hash": task.config_hash,
         "validation_fraction": task.validation_fraction,
-        "data_seed": data_seed,
-        "split_seed": split_seed,
-        "learner_seed": learner_seed,
+        **seeds,
         "selection_metric": metric_name,
     }
 
     try:
-        data = simulate_plr(task.scenario, task.n, task.p, data_seed, theta0)
+        data = simulate_plr(
+            task.scenario, task.n, task.p, seeds["data_seed"], theta0
+        )
         train, validation = train_test_split(
             np.arange(task.n),
             test_size=task.validation_fraction,
-            random_state=split_seed,
+            random_state=seeds["split_seed"],
             shuffle=True,
         )
         response = data.y if task.target == "l" else data.d
         truth = data.l0 if task.target == "l" else data.m0
         model = make_configured_tree_learner(
-            "xgboost", task.effective_params, learner_seed, fast=task_fast
+            "xgboost",
+            task.effective_params,
+            seeds["learner_seed"],
+            fast=task_fast,
         )
         model.fit(data.X[train], response[train])
         prediction = np.asarray(model.predict(data.X[validation]), dtype=float)
@@ -238,6 +251,7 @@ def _validate_record_metadata(
         "validation_fraction": task.validation_fraction,
         "nominal_config_hash": task.nominal_config_hash,
         "config_hash": task.config_hash,
+        **derive_tuning_seeds(task),
     }
     for field, expected in expected_fields.items():
         if record.get(field) != expected:

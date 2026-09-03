@@ -10,6 +10,7 @@ from tabdml.sharding import belongs_to_shard
 from tabdml.stage4_config import TreeBenchmarkCell, load_stage4_config
 from tabdml.stage4_tuning import (
     Stage4TuningTask,
+    derive_tuning_seeds,
     iter_tuning_tasks,
     run_tuning_task,
     select_tuned_xgboost,
@@ -106,6 +107,7 @@ def _record(
         "params": task.effective_params,
         "config_hash": task.config_hash,
         "validation_fraction": task.validation_fraction,
+        **derive_tuning_seeds(task),
         "validation_observed_mse": observed,
         "validation_truth_mse_diagnostic": diagnostic,
     }
@@ -367,6 +369,26 @@ def test_selection_rejects_forged_expected_record_fields(field):
         )
 
 
+@pytest.mark.parametrize("field", ["data_seed", "split_seed", "learner_seed"])
+@pytest.mark.parametrize("mutation", ["missing", "forged"])
+def test_selection_rejects_missing_or_forged_seed_provenance(field, mutation):
+    records = [
+        _record(target, "a", observed=1.0, diagnostic=2.0)
+        for target in ("l", "m")
+    ]
+    if mutation == "missing":
+        records[0].pop(field)
+    else:
+        records[0][field] += 1
+
+    with pytest.raises(ValueError, match=rf"{field} mismatch"):
+        select_tuned_xgboost(
+            records,
+            expected_replications=1,
+            expected_tasks=_expected_tasks(candidates=("a",)),
+        )
+
+
 def test_selection_rejects_failed_record_from_the_expected_profile():
     records = [
         _record(target, "a", observed=1.0, diagnostic=2.0)
@@ -444,6 +466,28 @@ def test_failed_result_is_resumed_only_with_retry_failed(monkeypatch, tmp_path):
 
     assert skipped == {"task_key": task.key, "status": "skipped"}
     assert retried["status"] == "success"
+    assert len(fitted_targets) == 1
+
+
+def test_successful_result_resume_rejects_forged_seed_provenance(
+    monkeypatch, tmp_path
+):
+    task = _task("l")
+    fitted_targets = []
+    monkeypatch.setattr(
+        "tabdml.stage4_tuning.simulate_plr", lambda *args, **kwargs: _data()
+    )
+    monkeypatch.setattr(
+        "tabdml.stage4_tuning.make_configured_tree_learner",
+        lambda *args, **kwargs: _RecordingModel(fitted_targets),
+    )
+    successful = run_tuning_task(task, output_root=tmp_path)
+    successful["learner_seed"] += 1
+    ResultStore(tmp_path).write(successful)
+
+    with pytest.raises(ValueError, match="learner_seed mismatch"):
+        run_tuning_task(task, output_root=tmp_path, retry_failed=True)
+
     assert len(fitted_targets) == 1
 
 
