@@ -7,10 +7,15 @@ import pytest
 import yaml
 
 from scripts import compose_stage4_dml, run_stage4_cache, run_stage4_tuning
+from tabdml.config import derive_seed
 from tabdml.nuisance_cache import NuisanceCache
 from tabdml.stage3b_screen import _params_hash
 from tabdml.stage4_config import load_stage4_config
-from tabdml.stage4_experiment import Stage4PairSpec, build_stage4_nuisance_spec
+from tabdml.stage4_experiment import (
+    Stage4PairSpec,
+    build_stage4_nuisance_spec,
+    stage4_configuration_fingerprint,
+)
 from tabdml.stage4_tuning import derive_tuning_seeds, iter_tuning_tasks
 from tabdml.storage import ResultStore
 
@@ -40,7 +45,11 @@ def _frozen_tuning(config, execution_profile="full"):
                             "nominal_config_hash": _params_hash(nominal),
                             "params": effective,
                             "config_hash": _params_hash(effective),
-                            "replications": 1,
+                            "replications": (
+                                1
+                                if execution_profile == "fast"
+                                else config["tuning"]["replications"]
+                            ),
                             "mean_validation_observed_mse": 1.0,
                             "mean_validation_truth_mse_diagnostic": 1.0,
                             "selection_metric": (
@@ -55,7 +64,11 @@ def _frozen_tuning(config, execution_profile="full"):
         "execution_profile": execution_profile,
         "selection_metric_l": "mean_validation_y_mse",
         "selection_metric_m": "mean_validation_d_mse",
-        "expected_replications": 1,
+        "expected_replications": (
+            1
+            if execution_profile == "fast"
+            else config["tuning"]["replications"]
+        ),
         "cells": cells,
     }
 
@@ -84,6 +97,97 @@ def _write_frozen(tmp_path, config, execution_profile="full"):
         encoding="utf-8",
     )
     return path
+
+
+def _failure_record(pair, status="failed"):
+    return {
+        "task_key": pair.key,
+        "stage": pair.stage,
+        "seed_namespace": pair.effective_seed_namespace,
+        "panel": pair.panel,
+        "scenario": pair.scenario,
+        "n": pair.n,
+        "p": pair.p,
+        "replication": pair.replication,
+        "learner_l": pair.learner_l,
+        "learner_m": pair.learner_m,
+        "learner_l_config_hash": pair.learner_l_config_hash,
+        "learner_m_config_hash": pair.learner_m_config_hash,
+        "folds_count": pair.folds_count,
+        "theta0": pair.theta0,
+        "execution_profile": pair.execution_profile,
+        "data_seed": derive_seed(
+            pair.effective_seed_namespace,
+            pair.scenario,
+            pair.n,
+            pair.p,
+            pair.replication,
+            "data",
+        ),
+        "fold_seed": derive_seed(
+            pair.effective_seed_namespace,
+            pair.scenario,
+            pair.n,
+            pair.p,
+            pair.replication,
+            "folds",
+        ),
+        "status": status,
+    }
+
+
+def _selection_artifact(config, execution_profile="full"):
+    ranking = []
+    for panel, panel_config in config["panels"].items():
+        for scenario in config["structures"]:
+            for n in panel_config["sample_sizes"]:
+                for p in panel_config["dimensions"]:
+                    ranking.append(
+                        {
+                            "panel": panel,
+                            "scenario": scenario,
+                            "n": n,
+                            "p": p,
+                            "mean_paired_squared_error_difference": float(n + p),
+                            "selection_rule": (
+                                "minimum_mean_tab_minus_xgb_squared_error"
+                            ),
+                        }
+                    )
+    groups = sorted(
+        (panel, scenario)
+        for panel in config["panels"]
+        for scenario in config["structures"]
+    )
+    cells = [
+        min(
+            (
+                row
+                for row in ranking
+                if (row["panel"], row["scenario"]) == group
+            ),
+            key=lambda row: (
+                row["mean_paired_squared_error_difference"],
+                row["n"],
+                row["p"],
+            ),
+        )
+        for group in groups
+    ]
+    return {
+        "execution_profile": execution_profile,
+        "screening_stage": config["screening"]["stage"],
+        "screening_seed_namespace": config["screening"]["seed_namespace"],
+        "expected_screening_replications": (
+            1
+            if execution_profile == "fast"
+            else config["screening"]["replications"]
+        ),
+        "selection_rule": "minimum_mean_tab_minus_xgb_squared_error",
+        "config_fingerprint": stage4_configuration_fingerprint(config),
+        "screening_ranking": ranking,
+        "cells": cells,
+    }
 
 
 def test_stage4_tuning_cli_fast_run_uses_valid_config_and_narrowed_tasks(
@@ -484,7 +588,7 @@ def test_stage4_compose_cli_retries_only_failed_records(monkeypatch, tmp_path):
             None,
         )
     output_root = tmp_path / "output"
-    ResultStore(output_root).write({"task_key": pair.key, "status": "failed"})
+    ResultStore(output_root).write(_failure_record(pair))
     base_argv = [
         "compose_stage4_dml.py",
         "--config",
@@ -537,9 +641,7 @@ def test_stage4_compose_cli_rejects_forged_failed_resume(
             None,
         )
     output_root = tmp_path / "output"
-    ResultStore(output_root).write(
-        {"task_key": pair.key, "status": "failed"}
-    )
+    ResultStore(output_root).write(_failure_record(pair))
     output_path = output_root / f"{pair.key}.json"
     failed = json.loads(output_path.read_text(encoding="utf-8"))
     failed["task_key"] = "forged-task"
@@ -566,3 +668,181 @@ def test_stage4_compose_cli_rejects_forged_failed_resume(
 
     with pytest.raises(ValueError, match="task_key mismatch"):
         compose_stage4_dml.main()
+
+
+@pytest.mark.parametrize("status", [None, "mystery", "skipped"])
+def test_stage4_compose_cli_rejects_unknown_resume_status(
+    monkeypatch, tmp_path, status
+):
+    config = load_stage4_config(CONFIG)
+    selected = _write_frozen(tmp_path, config)
+    pair = _pair("oracle", "oracle")
+    monkeypatch.setattr(
+        compose_stage4_dml,
+        "iter_stage4_pairs",
+        lambda *args, **kwargs: iter((pair,)),
+    )
+    cache = NuisanceCache(tmp_path / "cache")
+    for target in ("l", "m"):
+        cache.write(
+            build_stage4_nuisance_spec(pair, target),
+            np.zeros(pair.n),
+            (0.0, 0.0),
+            None,
+            None,
+        )
+    record = _failure_record(pair)
+    if status is None:
+        record.pop("status")
+    else:
+        record["status"] = status
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    output_path = output_root / f"{pair.key}.json"
+    output_path.write_text(json.dumps(record), encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "compose_stage4_dml.py",
+            "--config",
+            str(CONFIG),
+            "--phase",
+            "screening",
+            "--tuned-models",
+            str(selected),
+            "--cache-root",
+            str(tmp_path / "cache"),
+            "--output-root",
+            str(output_root),
+            "--replications",
+            "1",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="status"):
+        compose_stage4_dml.main()
+
+
+def test_stage4_cache_resolves_all_relative_paths_from_repository_root(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "project"
+    (project_root / "configs").mkdir(parents=True)
+    (project_root / "artifacts").mkdir()
+    config_path = project_root / "configs" / "stage4.yaml"
+    config_path.write_text(CONFIG.read_text(encoding="utf-8"), encoding="utf-8")
+    config = load_stage4_config(config_path)
+    (project_root / "artifacts" / "tuning.json").write_text(
+        json.dumps(_frozen_tuning(config)), encoding="utf-8"
+    )
+    (project_root / "artifacts" / "selection.json").write_text(
+        json.dumps(_selection_artifact(config)), encoding="utf-8"
+    )
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    pair = _pair("oracle", "oracle")
+    cache_roots = []
+    monkeypatch.setattr(
+        run_stage4_cache,
+        "__file__",
+        str(project_root / "scripts" / "run_stage4_cache.py"),
+    )
+    monkeypatch.setattr(
+        run_stage4_cache,
+        "iter_stage4_pairs",
+        lambda *args, **kwargs: iter((pair,)),
+    )
+    monkeypatch.setattr(
+        run_stage4_cache,
+        "fit_stage4_nuisance",
+        lambda pair, target, frozen, params, cache_root, **kwargs: (
+            cache_roots.append(Path(cache_root))
+        ),
+    )
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_stage4_cache.py",
+            "--config",
+            "configs/stage4.yaml",
+            "--phase",
+            "confirmation",
+            "--device-group",
+            "cpu",
+            "--tuned-models",
+            "artifacts/tuning.json",
+            "--selected-cells",
+            "artifacts/selection.json",
+            "--cache-root",
+            "results/cache",
+            "--replications",
+            "1",
+        ],
+    )
+
+    assert run_stage4_cache.main() == 0
+    assert cache_roots == [project_root / "results" / "cache"] * 2
+
+
+def test_stage4_compose_resolves_relative_paths_from_repository_root(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "project"
+    (project_root / "configs").mkdir(parents=True)
+    (project_root / "artifacts").mkdir()
+    config_path = project_root / "configs" / "stage4.yaml"
+    config_path.write_text(CONFIG.read_text(encoding="utf-8"), encoding="utf-8")
+    config = load_stage4_config(config_path)
+    (project_root / "artifacts" / "tuning.json").write_text(
+        json.dumps(_frozen_tuning(config)), encoding="utf-8"
+    )
+    pair = _pair("oracle", "oracle")
+    cache_root = project_root / "results" / "cache"
+    cache = NuisanceCache(cache_root)
+    for target in ("l", "m"):
+        cache.write(
+            build_stage4_nuisance_spec(pair, target),
+            np.zeros(pair.n),
+            (0.0, 0.0),
+            None,
+            None,
+        )
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.setattr(
+        compose_stage4_dml,
+        "__file__",
+        str(project_root / "scripts" / "compose_stage4_dml.py"),
+    )
+    monkeypatch.setattr(
+        compose_stage4_dml,
+        "iter_stage4_pairs",
+        lambda *args, **kwargs: iter((pair,)),
+    )
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "compose_stage4_dml.py",
+            "--config",
+            "configs/stage4.yaml",
+            "--phase",
+            "screening",
+            "--tuned-models",
+            "artifacts/tuning.json",
+            "--cache-root",
+            "results/cache",
+            "--output-root",
+            "results/output",
+            "--replications",
+            "1",
+        ],
+    )
+
+    assert compose_stage4_dml.main() == 0
+    assert (project_root / "results" / "output" / f"{pair.key}.json").exists()
+    assert not (elsewhere / "results").exists()

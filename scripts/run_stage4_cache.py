@@ -53,23 +53,29 @@ def _read_json(path: str | Path, label: str) -> Mapping:
     return value
 
 
+def _resolve(project_root: Path, value: str | Path) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else project_root / path
+
+
 def main() -> int:
     args = parse_args()
     validate_shard(args.num_shards, args.shard_index)
     project_root = Path(__file__).resolve().parents[1]
-    config_path = Path(args.config)
-    if not config_path.is_absolute():
-        config_path = project_root / config_path
+    config_path = _resolve(project_root, args.config)
     config = load_stage4_config(config_path)
-    frozen_tuning = _read_json(args.tuned_models, "frozen tuning")
+    tuned_models_path = _resolve(project_root, args.tuned_models)
+    frozen_tuning = _read_json(tuned_models_path, "frozen tuning")
+    cache_root = _resolve(project_root, args.cache_root)
     profile = "fast" if args.fast else "full"
     validate_frozen_tuning(config, frozen_tuning, profile)
     selected_confirmation = None
     if args.phase == "confirmation":
         if not args.selected_cells:
             raise ValueError("confirmation requires selected confirmation cells")
+        selected_cells_path = _resolve(project_root, args.selected_cells)
         selected_confirmation = _read_json(
-            args.selected_cells, "selected confirmation cells"
+            selected_cells_path, "selected confirmation cells"
         )
 
     pairs = iter_stage4_pairs(
@@ -102,7 +108,7 @@ def main() -> int:
             target,
             frozen_tuning,
             extra_trees_params,
-            args.cache_root,
+            cache_root,
             fast=args.fast,
             retry_failed=args.retry_failed,
         )

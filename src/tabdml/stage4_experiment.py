@@ -35,6 +35,30 @@ _ORACLE_DIAGNOSTICS = (
     ("oracle", "tabiclv2_1"),
     ("tabiclv2_1", "oracle"),
 )
+STAGE4_SELECTION_RULE = "minimum_mean_tab_minus_xgb_squared_error"
+_SELECTION_FIELDS = frozenset(
+    {
+        "execution_profile",
+        "screening_stage",
+        "screening_seed_namespace",
+        "expected_screening_replications",
+        "selection_rule",
+        "config_fingerprint",
+        "screening_ranking",
+        "cells",
+    }
+)
+_SELECTION_ROW_FIELDS = frozenset(
+    {
+        "panel",
+        "scenario",
+        "n",
+        "p",
+        "mean_paired_squared_error_difference",
+        "selection_rule",
+    }
+)
+_RESUMABLE_STATUSES = frozenset({"success", "failed", "oom"})
 
 
 @dataclass(frozen=True)
@@ -95,6 +119,11 @@ def _effective_tree_params(
     return effective
 
 
+def stage4_configuration_fingerprint(config: Mapping[str, Any]) -> str:
+    iter_tree_cells(config)
+    return _params_hash(dict(config))
+
+
 def validate_frozen_tuning(
     config: Mapping[str, Any],
     frozen_tuning: Mapping[str, Any],
@@ -111,12 +140,18 @@ def validate_frozen_tuning(
     if frozen_tuning.get("selection_metric_m") != "mean_validation_d_mse":
         raise ValueError("Frozen tuning selection_metric_m mismatch")
     expected_replications = frozen_tuning.get("expected_replications")
-    if (
-        isinstance(expected_replications, bool)
-        or not isinstance(expected_replications, int)
-        or expected_replications < 1
+    required_replications = (
+        1
+        if execution_profile == "fast"
+        else int(config["tuning"]["replications"])
+    )
+    if expected_replications != required_replications or isinstance(
+        expected_replications, bool
     ):
-        raise ValueError("Frozen tuning expected_replications is invalid")
+        raise ValueError(
+            "Frozen tuning expected_replications does not match the "
+            f"{execution_profile} profile contract"
+        )
 
     expected_cells = {cell.key for cell in iter_tree_cells(config)}
     cells = frozen_tuning.get("cells")
@@ -190,6 +225,139 @@ def validate_frozen_tuning(
                         f"Frozen tuning {metric} is invalid for {location}"
                     )
     return frozen_tuning
+
+
+def _require_native_cell_integer(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"Selection {field} must be a native integer")
+    return value
+
+
+def _validate_selection_row(
+    row: Any,
+    configured: Mapping[str, TreeBenchmarkCell],
+    location: str,
+) -> tuple[TreeBenchmarkCell, float]:
+    if not isinstance(row, Mapping) or set(row) != _SELECTION_ROW_FIELDS:
+        raise ValueError(f"Invalid selection row schema at {location}")
+    panel = row["panel"]
+    scenario = row["scenario"]
+    if not isinstance(panel, str) or not isinstance(scenario, str):
+        raise ValueError(f"Invalid panel/scenario at {location}")
+    n = _require_native_cell_integer(row["n"], "n")
+    p = _require_native_cell_integer(row["p"], "p")
+    cell_key = f"{panel}__{scenario}__n{n}__p{p}"
+    if cell_key not in configured:
+        raise ValueError(f"Selection cell is not configured: {cell_key}")
+    if row["selection_rule"] != STAGE4_SELECTION_RULE:
+        raise ValueError(f"Invalid selection_rule at {location}")
+    score = row["mean_paired_squared_error_difference"]
+    if (
+        isinstance(score, bool)
+        or not isinstance(score, (int, float))
+        or not np.isfinite(score)
+    ):
+        raise ValueError(f"Selection score must be finite at {location}")
+    return configured[cell_key], float(score)
+
+
+def validate_stage4_selection(
+    config: Mapping[str, Any],
+    selected_confirmation: Mapping[str, Any],
+    execution_profile: str,
+) -> tuple[TreeBenchmarkCell, ...]:
+    if execution_profile not in _EXECUTION_PROFILES:
+        raise ValueError("execution_profile must be 'full' or 'fast'")
+    if not isinstance(selected_confirmation, Mapping):
+        raise ValueError("Selected confirmation artifact must be a mapping")
+    if set(selected_confirmation) != _SELECTION_FIELDS:
+        raise ValueError("Selected confirmation artifact schema is invalid")
+    if selected_confirmation["execution_profile"] != execution_profile:
+        raise ValueError("Selected confirmation execution_profile mismatch")
+    screening = config["screening"]
+    if selected_confirmation["screening_stage"] != screening["stage"]:
+        raise ValueError("Selected confirmation screening_stage mismatch")
+    if (
+        selected_confirmation["screening_seed_namespace"]
+        != screening["seed_namespace"]
+    ):
+        raise ValueError(
+            "Selected confirmation screening_seed_namespace mismatch"
+        )
+    expected_replications = (
+        1
+        if execution_profile == "fast"
+        else int(screening["replications"])
+    )
+    actual_replications = selected_confirmation[
+        "expected_screening_replications"
+    ]
+    if (
+        isinstance(actual_replications, bool)
+        or actual_replications != expected_replications
+    ):
+        raise ValueError(
+            "Selected confirmation screening replications do not match "
+            f"the {execution_profile} profile contract"
+        )
+    if selected_confirmation["selection_rule"] != STAGE4_SELECTION_RULE:
+        raise ValueError("Selected confirmation selection_rule mismatch")
+    if (
+        selected_confirmation["config_fingerprint"]
+        != stage4_configuration_fingerprint(config)
+    ):
+        raise ValueError("Selected confirmation config_fingerprint mismatch")
+
+    configured = {cell.key: cell for cell in iter_tree_cells(config)}
+    ranking = selected_confirmation["screening_ranking"]
+    if isinstance(ranking, (str, bytes)) or not isinstance(ranking, Sequence):
+        raise ValueError("screening_ranking must contain all 24 cells")
+    if len(ranking) != len(configured):
+        raise ValueError("screening_ranking must contain all 24 cells")
+    ranked: dict[str, tuple[Mapping[str, Any], TreeBenchmarkCell, float]] = {}
+    for index, row in enumerate(ranking):
+        cell, score = _validate_selection_row(
+            row, configured, f"screening_ranking[{index}]"
+        )
+        if cell.key in ranked:
+            raise ValueError(f"Duplicate screening_ranking cell: {cell.key}")
+        ranked[cell.key] = (row, cell, score)
+    if set(ranked) != set(configured):
+        raise ValueError("screening_ranking must contain all 24 configured cells")
+
+    raw_cells = selected_confirmation["cells"]
+    if isinstance(raw_cells, (str, bytes)) or not isinstance(
+        raw_cells, Sequence
+    ) or len(raw_cells) != 6:
+        raise ValueError("confirmation requires six selected confirmation cells")
+    chosen: dict[tuple[str, str], tuple[Mapping[str, Any], TreeBenchmarkCell]] = {}
+    selected_cells: list[TreeBenchmarkCell] = []
+    for index, row in enumerate(raw_cells):
+        cell, _ = _validate_selection_row(row, configured, f"cells[{index}]")
+        ranked_row = ranked[cell.key][0]
+        if dict(row) != dict(ranked_row):
+            raise ValueError("Chosen cells must exactly match screening_ranking rows")
+        group = (cell.panel, cell.scenario)
+        if group in chosen:
+            raise ValueError(
+                "Chosen cells must contain one cell per panel and scenario"
+            )
+        chosen[group] = (row, cell)
+        selected_cells.append(cell)
+
+    grouped_ranking: dict[
+        tuple[str, str], list[tuple[Mapping[str, Any], TreeBenchmarkCell, float]]
+    ] = {}
+    for value in ranked.values():
+        cell = value[1]
+        grouped_ranking.setdefault((cell.panel, cell.scenario), []).append(value)
+    if set(chosen) != set(grouped_ranking):
+        raise ValueError("Chosen cells must contain one cell per panel and scenario")
+    for group, values in grouped_ranking.items():
+        expected = min(values, key=lambda value: (value[2], value[1].n, value[1].p))
+        if dict(chosen[group][0]) != dict(expected[0]):
+            raise ValueError("Chosen cells must be the deterministic minima")
+    return tuple(selected_cells)
 
 
 def resolve_method(
@@ -312,14 +480,21 @@ def fit_stage4_nuisance(
     )
     task = build_stage4_nuisance_spec(effective_pair, target, resolved)
     cache = NuisanceCache(cache_root)
+    repairing = False
     if cache.exists(task):
         try:
-            return cache.read(task, expected_length=task.n)
-        except ValueError:
+            cached = cache.read(task, expected_length=task.n)
+            validate_stage4_cached_result(effective_pair, cached, target)
+            return cached
+        except ValueError as error:
             if not retry_failed:
-                raise
+                raise ValueError(
+                    f"Stage 4 nuisance cache integrity error for {task.key}: "
+                    f"{error}"
+                ) from error
             cache.path(task).unlink()
-    return fit_cached_nuisance(
+            repairing = True
+    result = fit_cached_nuisance(
         task,
         cache_root=cache_root,
         theta0=effective_pair.theta0,
@@ -327,50 +502,28 @@ def fit_stage4_nuisance(
         learner_kind=resolved.learner_kind,
         learner_params=resolved.params,
     )
+    try:
+        validate_stage4_cached_result(effective_pair, result, target)
+    except ValueError as error:
+        cache.path(task).unlink(missing_ok=True)
+        operation = "rebuilt nuisance" if repairing else "fitted nuisance"
+        raise ValueError(
+            f"Stage 4 {operation} failed integrity validation for "
+            f"{task.key}: {error}"
+        ) from error
+    return result
 
 
 def _selected_confirmation_cells(
     config: Mapping[str, Any],
     selected_confirmation: Mapping[str, Any] | None,
+    execution_profile: str,
 ) -> tuple[TreeBenchmarkCell, ...]:
-    if not isinstance(selected_confirmation, Mapping):
+    if selected_confirmation is None:
         raise ValueError("confirmation requires six selected confirmation cells")
-    raw_cells = selected_confirmation.get("cells")
-    if isinstance(raw_cells, (str, bytes)) or not isinstance(raw_cells, Sequence):
-        raise ValueError("confirmation requires six selected confirmation cells")
-    if len(raw_cells) != 6:
-        raise ValueError("confirmation requires six selected confirmation cells")
-    configured = {cell.key: cell for cell in iter_tree_cells(config)}
-    selected: list[TreeBenchmarkCell] = []
-    for raw in raw_cells:
-        if not isinstance(raw, Mapping):
-            raise ValueError("Invalid selected confirmation cell")
-        try:
-            cell = TreeBenchmarkCell(
-                panel=str(raw["panel"]),
-                scenario=str(raw["scenario"]),
-                n=int(raw["n"]),
-                p=int(raw["p"]),
-            )
-        except (KeyError, TypeError, ValueError) as error:
-            raise ValueError("Invalid selected confirmation cell") from error
-        if cell.key not in configured:
-            raise ValueError(
-                f"Selected confirmation cell is not configured: {cell.key}"
-            )
-        selected.append(configured[cell.key])
-    if len({cell.key for cell in selected}) != 6:
-        raise ValueError("Selected confirmation cells must be unique")
-    expected_groups = {
-        (panel, scenario)
-        for panel in config["panels"]
-        for scenario in config["structures"]
-    }
-    if {(cell.panel, cell.scenario) for cell in selected} != expected_groups:
-        raise ValueError(
-            "Selected confirmation cells must cover every panel and structure"
-        )
-    return tuple(selected)
+    return validate_stage4_selection(
+        config, selected_confirmation, execution_profile
+    )
 
 
 def iter_stage4_pairs(
@@ -403,7 +556,9 @@ def iter_stage4_pairs(
     cells = (
         iter_tree_cells(config)
         if phase == "screening"
-        else _selected_confirmation_cells(config, selected_confirmation)
+        else _selected_confirmation_cells(
+            config, selected_confirmation, profile
+        )
     )
     method_pairs = tuple((method, method) for method in methods) + _ORACLE_DIAGNOSTICS
     for cell in cells:
@@ -505,10 +660,8 @@ def compose_stage4_record(
     return record
 
 
-def validate_stage4_record(
-    record: Mapping[str, Any], pair: Stage4PairSpec
-) -> Mapping[str, Any]:
-    expected = {
+def _expected_stage4_record_identity(pair: Stage4PairSpec) -> dict[str, Any]:
+    return {
         "task_key": pair.key,
         "stage": pair.stage,
         "seed_namespace": pair.effective_seed_namespace,
@@ -540,11 +693,38 @@ def validate_stage4_record(
             pair.replication,
             "folds",
         ),
-        "status": "success",
     }
+
+
+def _validate_stage4_record_identity(
+    record: Mapping[str, Any], pair: Stage4PairSpec
+) -> None:
+    expected = _expected_stage4_record_identity(pair)
     for field, expected_value in expected.items():
         if record.get(field) != expected_value:
             raise ValueError(f"Invalid Stage 4 record {pair.key}: {field} mismatch")
+
+
+def validate_stage4_resume_record(
+    record: Mapping[str, Any], pair: Stage4PairSpec
+) -> str:
+    status = record.get("status")
+    if status not in _RESUMABLE_STATUSES:
+        raise ValueError(
+            f"Invalid Stage 4 record {pair.key}: status is not resumable"
+        )
+    _validate_stage4_record_identity(record, pair)
+    if status == "success":
+        validate_stage4_record(record, pair)
+    return str(status)
+
+
+def validate_stage4_record(
+    record: Mapping[str, Any], pair: Stage4PairSpec
+) -> Mapping[str, Any]:
+    _validate_stage4_record_identity(record, pair)
+    if record.get("status") != "success":
+        raise ValueError(f"Invalid Stage 4 record {pair.key}: status mismatch")
     numeric_fields = (
         "theta",
         "standard_error",

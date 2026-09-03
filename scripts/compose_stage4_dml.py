@@ -15,6 +15,7 @@ from tabdml.stage4_experiment import (
     validate_frozen_tuning,
     validate_stage4_cached_result,
     validate_stage4_record,
+    validate_stage4_resume_record,
 )
 from tabdml.storage import ResultStore
 
@@ -58,23 +59,29 @@ def _read_existing(path: Path) -> Mapping:
     return value
 
 
+def _resolve(project_root: Path, value: str | Path) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else project_root / path
+
+
 def main() -> int:
     args = parse_args()
     validate_shard(args.num_shards, args.shard_index)
     project_root = Path(__file__).resolve().parents[1]
-    config_path = Path(args.config)
-    if not config_path.is_absolute():
-        config_path = project_root / config_path
+    config_path = _resolve(project_root, args.config)
     config = load_stage4_config(config_path)
-    frozen_tuning = _read_json(args.tuned_models, "frozen tuning")
+    tuned_models_path = _resolve(project_root, args.tuned_models)
+    frozen_tuning = _read_json(tuned_models_path, "frozen tuning")
+    cache_root = _resolve(project_root, args.cache_root)
     profile = "fast" if args.fast else "full"
     validate_frozen_tuning(config, frozen_tuning, profile)
     selected_confirmation = None
     if args.phase == "confirmation":
         if not args.selected_cells:
             raise ValueError("confirmation requires selected confirmation cells")
+        selected_cells_path = _resolve(project_root, args.selected_cells)
         selected_confirmation = _read_json(
-            args.selected_cells, "selected confirmation cells"
+            selected_cells_path, "selected confirmation cells"
         )
     pairs = tuple(
         iter_stage4_pairs(
@@ -88,10 +95,11 @@ def main() -> int:
             fast=args.fast,
         )
     )
-    output_root = Path(
-        args.output_root or f"results/stage4_tree_{args.phase}_raw"
+    output_root = _resolve(
+        project_root,
+        args.output_root or f"results/stage4_tree_{args.phase}_raw",
     )
-    cache = NuisanceCache(args.cache_root)
+    cache = NuisanceCache(cache_root)
 
     cached_results = {}
     pair_tasks = {}
@@ -114,12 +122,8 @@ def main() -> int:
         output_path = output_root / f"{pair.key}.json"
         if output_path.exists():
             previous = _read_existing(output_path)
-            if previous.get("task_key") != pair.key:
-                raise ValueError(
-                    f"Invalid Stage 4 record {pair.key}: task_key mismatch"
-                )
-            if previous.get("status") == "success":
-                validate_stage4_record(previous, pair)
+            status = validate_stage4_resume_record(previous, pair)
+            if status == "success":
                 actions.append((pair, "skip"))
                 continue
             if not args.retry_failed:
