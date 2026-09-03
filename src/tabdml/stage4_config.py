@@ -13,6 +13,78 @@ _KNOWN_STRUCTURES = frozenset(
     {"tree_stumps", "tree_hierarchical", "tree_forest_sum"}
 )
 _PANEL_ORDER = ("standard", "small_n_high_p")
+_EXPECTED_PANEL_GRIDS = {
+    "standard": {
+        "sample_sizes": (1000, 2000),
+        "dimensions": (10, 50),
+    },
+    "small_n_high_p": {
+        "sample_sizes": (300, 500),
+        "dimensions": (50, 100),
+    },
+}
+_EXPECTED_XGBOOST_CANDIDATES = {
+    "xgb_d1_lr003": {
+        "n_estimators": 800,
+        "max_depth": 1,
+        "learning_rate": 0.03,
+        "min_child_weight": 1,
+        "reg_lambda": 1.0,
+        "subsample": 0.9,
+        "colsample_bytree": 1.0,
+        "tree_method": "hist",
+    },
+    "xgb_d2_lr003": {
+        "n_estimators": 800,
+        "max_depth": 2,
+        "learning_rate": 0.03,
+        "min_child_weight": 1,
+        "reg_lambda": 1.0,
+        "subsample": 0.9,
+        "colsample_bytree": 1.0,
+        "tree_method": "hist",
+    },
+    "xgb_d2_lr005": {
+        "n_estimators": 600,
+        "max_depth": 2,
+        "learning_rate": 0.05,
+        "min_child_weight": 5,
+        "reg_lambda": 1.0,
+        "subsample": 0.9,
+        "colsample_bytree": 1.0,
+        "tree_method": "hist",
+    },
+    "xgb_d3_lr003": {
+        "n_estimators": 800,
+        "max_depth": 3,
+        "learning_rate": 0.03,
+        "min_child_weight": 5,
+        "reg_lambda": 1.0,
+        "subsample": 0.9,
+        "colsample_bytree": 1.0,
+        "tree_method": "hist",
+    },
+    "xgb_d3_lr005": {
+        "n_estimators": 600,
+        "max_depth": 3,
+        "learning_rate": 0.05,
+        "min_child_weight": 10,
+        "reg_lambda": 2.0,
+        "subsample": 0.9,
+        "colsample_bytree": 1.0,
+        "tree_method": "hist",
+    },
+    "xgb_d4_lr003": {
+        "n_estimators": 800,
+        "max_depth": 4,
+        "learning_rate": 0.03,
+        "min_child_weight": 5,
+        "reg_lambda": 2.0,
+        "subsample": 0.9,
+        "colsample_bytree": 1.0,
+        "tree_method": "hist",
+    },
+}
 _REQUIRED_TOP_LEVEL = frozenset(
     {
         "theta0",
@@ -111,6 +183,44 @@ def _validate_stage4_config(config: Mapping[str, Any]) -> None:
                 raise ValueError("Stage 4 dimensions require p >= 10")
         panel_values[panel_name] = (sample_sizes, dimensions)
 
+    identities = [
+        (panel_name, scenario, n, p)
+        for panel_name, (sample_sizes, dimensions) in panel_values.items()
+        for scenario in structures
+        for n in sample_sizes
+        for p in dimensions
+    ]
+    if len(identities) != len(set(identities)):
+        raise ValueError("panel grids produce duplicate cells")
+
+    panel_grids = {
+        panel_name: {
+            (n, p) for n in sample_sizes for p in dimensions
+        }
+        for panel_name, (sample_sizes, dimensions) in panel_values.items()
+    }
+    if panel_grids["standard"] & panel_grids["small_n_high_p"]:
+        raise ValueError("standard and small_n_high_p panel grids must be disjoint")
+
+    cell_counts = {
+        panel_name: len(structures) * len(sample_sizes) * len(dimensions)
+        for panel_name, (sample_sizes, dimensions) in panel_values.items()
+    }
+    if any(count != 12 for count in cell_counts.values()) or sum(
+        cell_counts.values()
+    ) != 24:
+        raise ValueError("Stage 4 requires exactly 12 cells per panel and 24 overall")
+
+    for panel_name, (sample_sizes, dimensions) in panel_values.items():
+        expected = _EXPECTED_PANEL_GRIDS[panel_name]
+        if (
+            tuple(sample_sizes) != expected["sample_sizes"]
+            or tuple(dimensions) != expected["dimensions"]
+        ):
+            raise ValueError(
+                f"panels.{panel_name} must match the exact prescribed grid"
+            )
+
     tuning = _require_mapping(config["tuning"], "tuning")
     _require_fields(
         tuning,
@@ -136,6 +246,7 @@ def _validate_stage4_config(config: Mapping[str, Any]) -> None:
         tuning["xgboost_candidates"], "tuning.xgboost_candidates"
     )
     candidate_names = []
+    candidate_params = {}
     for index, candidate_value in enumerate(candidates):
         candidate = _require_mapping(
             candidate_value, f"tuning.xgboost_candidates[{index}]"
@@ -148,12 +259,22 @@ def _validate_stage4_config(config: Mapping[str, Any]) -> None:
         name = candidate["name"]
         if not isinstance(name, str) or not name:
             raise ValueError("XGBoost candidate names must be nonempty strings")
-        _require_mapping(
+        params = _require_mapping(
             candidate["params"], f"tuning.xgboost_candidates[{index}].params"
         )
         candidate_names.append(name)
+        candidate_params[name] = params
     if len(candidate_names) != len(set(candidate_names)):
         raise ValueError("XGBoost candidate names must be unique")
+    if set(candidate_names) != set(_EXPECTED_XGBOOST_CANDIDATES):
+        raise ValueError(
+            "tuning requires the exact six XGBoost candidate names"
+        )
+    for name, expected_params in _EXPECTED_XGBOOST_CANDIDATES.items():
+        if dict(candidate_params[name]) != expected_params:
+            raise ValueError(
+                f"XGBoost candidate {name} must use the exact prescribed parameters"
+            )
 
     screening = _require_mapping(config["screening"], "screening")
     _require_fields(
@@ -185,17 +306,6 @@ def _validate_stage4_config(config: Mapping[str, Any]) -> None:
     extra_trees = _require_mapping(config["extra_trees"], "extra_trees")
     _require_fields(extra_trees, {"params"}, "extra_trees")
     _require_mapping(extra_trees["params"], "extra_trees.params")
-
-    identities = [
-        (panel_name, scenario, n, p)
-        for panel_name, (sample_sizes, dimensions) in panel_values.items()
-        for scenario in structures
-        for n in sample_sizes
-        for p in dimensions
-    ]
-    if len(identities) != len(set(identities)):
-        raise ValueError("panel grids produce duplicate cells")
-
 
 def load_stage4_config(path: str | Path) -> dict[str, Any]:
     with Path(path).open("r", encoding="utf-8") as handle:

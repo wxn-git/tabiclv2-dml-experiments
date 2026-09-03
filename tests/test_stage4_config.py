@@ -40,6 +40,40 @@ def test_stage4_config_keeps_panel_ranges_disjoint():
     }
 
 
+def test_panel_cell_counts_must_remain_twelve_each_and_twenty_four_overall():
+    config = load_stage4_config(CONFIG)
+    config["panels"]["standard"]["sample_sizes"].append(1500)
+
+    with pytest.raises(ValueError, match="12 cells per panel and 24 overall"):
+        iter_tree_cells(config)
+
+
+@pytest.mark.parametrize(
+    ("panel", "field", "values"),
+    [
+        ("standard", "sample_sizes", [1000, 1500]),
+        ("standard", "dimensions", [10, 40]),
+        ("small_n_high_p", "sample_sizes", [300, 600]),
+        ("small_n_high_p", "dimensions", [50, 90]),
+    ],
+)
+def test_panel_values_must_match_the_exact_prescribed_grids(panel, field, values):
+    config = load_stage4_config(CONFIG)
+    config["panels"][panel][field] = values
+
+    with pytest.raises(ValueError, match="exact prescribed grid"):
+        iter_tree_cells(config)
+
+
+def test_panel_grids_must_remain_disjoint():
+    config = load_stage4_config(CONFIG)
+    config["panels"]["standard"]["sample_sizes"] = [300, 2000]
+    config["panels"]["standard"]["dimensions"] = [50, 10]
+
+    with pytest.raises(ValueError, match="disjoint"):
+        iter_tree_cells(config)
+
+
 def test_invalid_duplicate_or_low_dimension_cell_is_rejected(tmp_path):
     config = load_stage4_config(CONFIG)
     config["panels"]["standard"]["dimensions"] = [9]
@@ -124,6 +158,40 @@ def test_duplicate_xgboost_candidate_names_are_rejected():
     config["tuning"]["xgboost_candidates"][1]["name"] = "xgb_d1_lr003"
 
     with pytest.raises(ValueError, match="candidate names"):
+        iter_tree_cells(config)
+
+
+@pytest.mark.parametrize("mutation", ["empty", "missing", "extra", "unknown"])
+def test_xgboost_candidate_names_must_be_the_exact_prescribed_six(mutation):
+    config = load_stage4_config(CONFIG)
+    candidates = config["tuning"]["xgboost_candidates"]
+    if mutation == "empty":
+        candidates.clear()
+    elif mutation == "missing":
+        candidates.pop()
+    elif mutation == "extra":
+        extra = deepcopy(candidates[0])
+        extra["name"] = "xgb_unknown"
+        candidates.append(extra)
+    else:
+        candidates[0]["name"] = "xgb_unknown"
+
+    with pytest.raises(ValueError, match="exact six XGBoost candidate names"):
+        iter_tree_cells(config)
+
+
+@pytest.mark.parametrize("mutation", ["changed", "missing", "extra"])
+def test_xgboost_candidate_parameters_must_match_exactly(mutation):
+    config = load_stage4_config(CONFIG)
+    params = config["tuning"]["xgboost_candidates"][0]["params"]
+    if mutation == "changed":
+        params["max_depth"] = 9
+    elif mutation == "missing":
+        del params["tree_method"]
+    else:
+        params["gamma"] = 0
+
+    with pytest.raises(ValueError, match="exact prescribed parameters"):
         iter_tree_cells(config)
 
 
