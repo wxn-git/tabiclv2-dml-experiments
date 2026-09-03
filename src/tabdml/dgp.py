@@ -55,6 +55,8 @@ def simulate_plr(
     seed: int,
     theta0: float = 1.0,
 ) -> SimulatedData:
+    if scenario == "tree_forest_sum" and p < 10:
+        raise ValueError("tree_forest_sum requires p >= 10.")
     if n < 10 or p < 5:
         raise ValueError("PLR simulations require n >= 10 and p >= 5.")
     rng = np.random.default_rng(seed)
@@ -92,8 +94,6 @@ def simulate_plr(
         raw_m = _hierarchical_raw(X, 0, 1, 2, 0.8, 0.6, -0.4)
         raw_g = _hierarchical_raw(X, 0, 3, 4, 0.7, 0.5, -0.4)
     elif scenario == "tree_forest_sum":
-        if p < 10:
-            raise ValueError("tree_forest_sum requires p >= 10.")
         raw_m = _hierarchical_raw(X, 0, 1, 2, 0.55, 0.40, -0.30) + _hierarchical_raw(
             X, 3, 4, 5, 0.45, -0.35, 0.30
         )

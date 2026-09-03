@@ -88,3 +88,8 @@ def test_tree_forest_sum_matches_declared_formula():
 def test_tree_forest_sum_requires_ten_columns():
     with pytest.raises(ValueError, match="requires p >= 10"):
         simulate_plr("tree_forest_sum", n=500, p=9, seed=43)
+
+
+def test_tree_forest_sum_uses_specific_error_below_general_minimum():
+    with pytest.raises(ValueError, match=r"^tree_forest_sum requires p >= 10\.$"):
+        simulate_plr("tree_forest_sum", n=500, p=4, seed=47)
