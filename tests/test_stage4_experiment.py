@@ -22,6 +22,7 @@ from tabdml.stage4_experiment import (
     validate_stage4_selection,
     validate_stage4_resume_record,
 )
+from tabdml.stage4_tuning import tuning_run_fingerprint
 
 
 CONFIG = Path("configs/stage4_tree_benchmark.yaml")
@@ -75,6 +76,11 @@ def config():
 
 
 def frozen_for_config(config, execution_profile="full"):
+    expected_replications = (
+        1
+        if execution_profile == "fast"
+        else config["tuning"]["replications"]
+    )
     candidate = config["tuning"]["xgboost_candidates"][0]
     nominal_params = dict(candidate["params"])
     params = dict(nominal_params)
@@ -97,9 +103,7 @@ def frozen_for_config(config, execution_profile="full"):
                             "params": params,
                             "config_hash": _params_hash(params),
                             "replications": (
-                                1
-                                if execution_profile == "fast"
-                                else config["tuning"]["replications"]
+                                expected_replications
                             ),
                             "mean_validation_observed_mse": 1.0,
                             "mean_validation_truth_mse_diagnostic": 1.0,
@@ -110,14 +114,17 @@ def frozen_for_config(config, execution_profile="full"):
                             ),
                         }
     return {
+        "tuning_stage": config["tuning"]["stage"],
+        "tuning_seed_namespace": config["tuning"]["seed_namespace"],
+        "tuning_run_fingerprint": tuning_run_fingerprint(
+            config,
+            expected_replications,
+            execution_profile,
+        ),
         "execution_profile": execution_profile,
         "selection_metric_l": "mean_validation_y_mse",
         "selection_metric_m": "mean_validation_d_mse",
-        "expected_replications": (
-            1
-            if execution_profile == "fast"
-            else config["tuning"]["replications"]
-        ),
+        "expected_replications": expected_replications,
         "cells": cells,
     }
 
@@ -277,14 +284,51 @@ def test_cached_stage4_nuisance_is_reused(monkeypatch, tmp_path, frozen):
     np.testing.assert_array_equal(first.prediction, second.prediction)
 
 
-def test_frozen_tuning_validation_accepts_exact_effective_provenance(config):
-    selected = frozen_for_config(config, execution_profile="fast")
+@pytest.mark.parametrize("execution_profile", ["full", "fast"])
+def test_frozen_tuning_validation_accepts_exact_task4_run_provenance(
+    config, execution_profile
+):
+    selected = frozen_for_config(config, execution_profile)
 
     validated = validate_frozen_tuning(
-        config, selected, execution_profile="fast"
+        config, selected, execution_profile=execution_profile
     )
 
     assert validated is selected
+
+
+@pytest.mark.parametrize("field", ["stage", "seed_namespace"])
+def test_frozen_tuning_rejects_artifact_after_tuning_identity_change(
+    config, field
+):
+    selected = frozen_for_config(config)
+    changed_config = deepcopy(config)
+    changed_config["tuning"][field] += "__changed"
+
+    with pytest.raises(ValueError, match=f"tuning_{field}"):
+        validate_frozen_tuning(
+            changed_config,
+            selected,
+            execution_profile="full",
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("tuning_stage", "forged-stage"),
+        ("tuning_seed_namespace", "forged-namespace"),
+        ("tuning_run_fingerprint", "forged-fingerprint"),
+    ],
+)
+def test_frozen_tuning_rejects_forged_task4_run_provenance(
+    config, field, invalid
+):
+    selected = frozen_for_config(config)
+    selected[field] = invalid
+
+    with pytest.raises(ValueError, match=field):
+        validate_frozen_tuning(config, selected, execution_profile="full")
 
 
 def test_frozen_tuning_rejects_one_replication_labeled_full(config):
@@ -731,4 +775,47 @@ def test_resume_rejects_stale_failure_provenance(field):
     record[field] = "stale" if isinstance(record[field], str) else -1
 
     with pytest.raises(ValueError, match=rf"{field} mismatch"):
+        validate_stage4_resume_record(record, pair)
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("replication", False),
+        ("replication", 0.0),
+        ("n", 80.0),
+        ("p", 10.0),
+        ("folds_count", 2.0),
+    ],
+)
+def test_resume_rejects_non_native_integer_identity(field, invalid):
+    pair = make_pair(learner_l="oracle", learner_m="oracle")
+    record = failure_record(pair)
+    record[field] = invalid
+
+    with pytest.raises(ValueError, match=rf"{field} mismatch"):
+        validate_stage4_resume_record(record, pair)
+
+
+@pytest.mark.parametrize("invalid", [True, "1.0", np.inf])
+def test_resume_rejects_invalid_theta0_identity(invalid):
+    pair = make_pair(learner_l="oracle", learner_m="oracle")
+    record = failure_record(pair)
+    record["theta0"] = invalid
+
+    with pytest.raises(ValueError, match="theta0 mismatch"):
+        validate_stage4_resume_record(record, pair)
+
+
+def test_resume_rejects_non_string_identity_even_if_it_compares_equal():
+    pair = make_pair(learner_l="oracle", learner_m="oracle")
+    record = failure_record(pair)
+
+    class EqualStage:
+        def __eq__(self, other):
+            return other == pair.stage
+
+    record["stage"] = EqualStage()
+
+    with pytest.raises(ValueError, match="stage mismatch"):
         validate_stage4_resume_record(record, pair)

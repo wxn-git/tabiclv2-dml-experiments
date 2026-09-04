@@ -18,6 +18,7 @@ from .stage3b import (
 )
 from .stage3b_screen import _params_hash
 from .stage4_config import TreeBenchmarkCell, iter_tree_cells
+from .stage4_tuning import tuning_run_fingerprint
 
 
 _EXECUTION_PROFILES = frozenset({"full", "fast"})
@@ -152,6 +153,19 @@ def validate_frozen_tuning(
             "Frozen tuning expected_replications does not match the "
             f"{execution_profile} profile contract"
         )
+    expected_run_provenance = {
+        "tuning_stage": config["tuning"]["stage"],
+        "tuning_seed_namespace": config["tuning"]["seed_namespace"],
+        "tuning_run_fingerprint": tuning_run_fingerprint(
+            config,
+            required_replications,
+            execution_profile,
+        ),
+    }
+    for field, expected_value in expected_run_provenance.items():
+        value = frozen_tuning.get(field)
+        if not isinstance(value, str) or value != expected_value:
+            raise ValueError(f"Frozen tuning {field} mismatch")
 
     expected_cells = {cell.key for cell in iter_tree_cells(config)}
     cells = frozen_tuning.get("cells")
@@ -700,8 +714,43 @@ def _validate_stage4_record_identity(
     record: Mapping[str, Any], pair: Stage4PairSpec
 ) -> None:
     expected = _expected_stage4_record_identity(pair)
+    string_fields = frozenset(
+        {
+            "task_key",
+            "stage",
+            "seed_namespace",
+            "panel",
+            "scenario",
+            "learner_l",
+            "learner_m",
+            "learner_l_config_hash",
+            "learner_m_config_hash",
+            "execution_profile",
+        }
+    )
+    integer_fields = frozenset(
+        {
+            "n",
+            "p",
+            "replication",
+            "folds_count",
+            "data_seed",
+            "fold_seed",
+        }
+    )
     for field, expected_value in expected.items():
-        if record.get(field) != expected_value:
+        value = record.get(field)
+        if field in string_fields:
+            valid_type = isinstance(value, str)
+        elif field in integer_fields:
+            valid_type = isinstance(value, int) and not isinstance(value, bool)
+        else:
+            valid_type = (
+                not isinstance(value, bool)
+                and isinstance(value, (int, float))
+                and np.isfinite(value)
+            )
+        if not valid_type or value != expected_value:
             raise ValueError(f"Invalid Stage 4 record {pair.key}: {field} mismatch")
 
 

@@ -19,6 +19,7 @@ from tabdml.stage4_experiment import (
 from tabdml.stage4_tuning import (
     derive_tuning_seeds,
     iter_tuning_tasks,
+    tuning_run_fingerprint,
     tuning_task_universe_fingerprint,
 )
 from tabdml.storage import ResultStore
@@ -29,6 +30,11 @@ CONFIG = PROJECT_ROOT / "configs" / "stage4_tree_benchmark.yaml"
 
 
 def _frozen_tuning(config, execution_profile="full"):
+    expected_replications = (
+        1
+        if execution_profile == "fast"
+        else config["tuning"]["replications"]
+    )
     candidate = config["tuning"]["xgboost_candidates"][0]
     nominal = dict(candidate["params"])
     effective = dict(nominal)
@@ -50,9 +56,7 @@ def _frozen_tuning(config, execution_profile="full"):
                             "params": effective,
                             "config_hash": _params_hash(effective),
                             "replications": (
-                                1
-                                if execution_profile == "fast"
-                                else config["tuning"]["replications"]
+                                expected_replications
                             ),
                             "mean_validation_observed_mse": 1.0,
                             "mean_validation_truth_mse_diagnostic": 1.0,
@@ -65,14 +69,17 @@ def _frozen_tuning(config, execution_profile="full"):
                         for target in ("l", "m")
                     }
     return {
+        "tuning_stage": config["tuning"]["stage"],
+        "tuning_seed_namespace": config["tuning"]["seed_namespace"],
+        "tuning_run_fingerprint": tuning_run_fingerprint(
+            config,
+            expected_replications,
+            execution_profile,
+        ),
         "execution_profile": execution_profile,
         "selection_metric_l": "mean_validation_y_mse",
         "selection_metric_m": "mean_validation_d_mse",
-        "expected_replications": (
-            1
-            if execution_profile == "fast"
-            else config["tuning"]["replications"]
-        ),
+        "expected_replications": expected_replications,
         "cells": cells,
     }
 
