@@ -26,6 +26,7 @@ from .stage4_experiment import (
     validate_stage4_record,
     validate_stage4_selection,
 )
+from .stage4_selection import select_confirmation_cells
 
 
 PRIMARY_METHODS = ("tabiclv2_1", "xgboost_tuned")
@@ -72,6 +73,7 @@ AGGREGATE_COLUMNS = [
 PRIMARY_COMPARISON_COLUMNS = [
     *CELL_COLUMNS,
     "paired_count",
+    "inference_status",
     "tab_rmse",
     "xgb_rmse",
     "rmse_improvement_pct",
@@ -94,12 +96,51 @@ PRIMARY_COMPARISON_COLUMNS = [
     "superior",
     "failed_conditions",
 ]
+RANKING_COLUMNS = [
+    *CELL_COLUMNS,
+    "mean_paired_squared_error_difference",
+    "selection_rule",
+]
+COVERAGE_COLUMNS = [
+    *CELL_COLUMNS,
+    "method",
+    "learner_l",
+    "learner_m",
+    "replications",
+    "coverage",
+    "coverage_ci_lower",
+    "coverage_ci_upper",
+    "nominal_coverage_in_exact_interval",
+    "mean_interval_width",
+]
+NUISANCE_COLUMNS = [
+    *CELL_COLUMNS,
+    "method",
+    "learner_l",
+    "learner_m",
+    "replications",
+    "mean_l_mse",
+    "mean_m_mse",
+    "mean_nuisance_error_product",
+    "mean_lm_error_cross",
+    "mean_residual_d_variance",
+    "mean_bias_numerator_proxy",
+    "mean_theta_proxy",
+    "mean_proxy_error",
+    "mean_runtime_seconds",
+    "mean_l_fit_seconds",
+    "mean_m_fit_seconds",
+    "mean_total_fit_seconds",
+    "mean_peak_gpu_mb",
+    "gpu_observation_count",
+    "fallback_count",
+]
 
 
 def _finite_number(value: Any, name: str) -> float:
     if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
+        isinstance(value, (bool, np.bool_))
+        or not isinstance(value, (int, float, np.integer, np.floating))
         or not np.isfinite(value)
     ):
         raise ValueError(f"{name} must be a finite numeric value")
@@ -110,6 +151,88 @@ def _native_integer(value: Any, name: str, minimum: int = 0) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         raise ValueError(f"{name} must be a native integer >= {minimum}")
     return value
+
+
+def validate_stage4_alpha(alpha: Any) -> float:
+    """Validate the predeclared confidence level for confirmatory analysis."""
+    level = _finite_number(alpha, "alpha")
+    if level != 0.05:
+        raise ValueError("Stage 4 confirmatory alpha must be exactly 0.05")
+    return level
+
+
+def validate_stage4_theta0(theta0: Any) -> float:
+    """Validate the fixed estimand used by every Stage 4 analysis interface."""
+    try:
+        truth = _finite_number(theta0, "theta0")
+    except ValueError as error:
+        raise ValueError(
+            "fixed Stage 4 design requires theta0 exactly 1.0"
+        ) from error
+    if truth != 1.0:
+        raise ValueError("fixed Stage 4 design requires theta0 exactly 1.0")
+    return truth
+
+
+def _validate_fixed_stage4_design(config: Mapping[str, Any]) -> None:
+    if not isinstance(config, Mapping):
+        raise ValueError("fixed Stage 4 design requires a config mapping")
+
+    validate_stage4_theta0(config.get("theta0"))
+
+    folds = config.get("folds")
+    if isinstance(folds, bool) or not isinstance(folds, int) or folds != 5:
+        raise ValueError("fixed Stage 4 design requires exactly 5 folds")
+
+    for section, expected in (
+        ("tuning", 10),
+        ("screening", 20),
+        ("confirmation", 100),
+    ):
+        phase = config.get(section)
+        actual = phase.get("replications") if isinstance(phase, Mapping) else None
+        if (
+            isinstance(actual, bool)
+            or not isinstance(actual, int)
+            or actual != expected
+        ):
+            raise ValueError(
+                "fixed Stage 4 design requires "
+                f"{section} replications exactly {expected}"
+            )
+
+
+def _checked_mean(values: Any, name: str) -> float:
+    try:
+        with np.errstate(over="raise", invalid="raise", divide="raise"):
+            result = float(np.mean(np.asarray(values, dtype=float)))
+    except FloatingPointError as error:
+        raise ValueError(f"{name} calculation overflowed") from error
+    if not np.isfinite(result):
+        raise ValueError(f"{name} calculation produced a nonfinite value")
+    return result
+
+
+def _checked_std(values: Any, name: str) -> float:
+    try:
+        with np.errstate(over="raise", invalid="raise", divide="raise"):
+            result = float(np.std(np.asarray(values, dtype=float), ddof=1))
+    except FloatingPointError as error:
+        raise ValueError(f"{name} calculation overflowed") from error
+    if not np.isfinite(result):
+        raise ValueError(f"{name} calculation produced a nonfinite value")
+    return result
+
+
+def _checked_squares(values: Any, name: str) -> np.ndarray:
+    try:
+        with np.errstate(over="raise", invalid="raise"):
+            result = np.square(np.asarray(values, dtype=float))
+    except FloatingPointError as error:
+        raise ValueError(f"{name} calculation overflowed") from error
+    if not np.isfinite(result).all():
+        raise ValueError(f"{name} calculation produced nonfinite values")
+    return result
 
 
 def holm_adjust(p_values: Sequence[float]) -> np.ndarray:
@@ -168,10 +291,26 @@ def exact_coverage_interval(
 def apply_superiority_rule(comparison: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(comparison, Mapping):
         raise ValueError("comparison must be a mapping")
+    improvement_value = comparison.get("rmse_improvement_pct")
+    improvement_undefined = improvement_value is None or (
+        isinstance(improvement_value, (float, np.floating))
+        and np.isnan(improvement_value)
+    )
+    if improvement_undefined:
+        xgb_rmse = _finite_number(comparison.get("xgb_rmse"), "xgb_rmse")
+        tab_rmse = _finite_number(comparison.get("tab_rmse"), "tab_rmse")
+        if xgb_rmse != 0.0 or tab_rmse < 0.0:
+            raise ValueError(
+                "undefined rmse_improvement_pct requires zero xgb_rmse"
+            )
+        improvement = None
+    else:
+        improvement = _finite_number(
+            improvement_value, "rmse_improvement_pct"
+        )
     numeric = {
         field: _finite_number(comparison.get(field), field)
         for field in (
-            "rmse_improvement_pct",
             "holm_p_value",
             "tab_coverage",
             "xgb_coverage",
@@ -187,7 +326,14 @@ def apply_superiority_rule(comparison: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(symmetric, (bool, np.bool_)):
         raise ValueError("symmetric_success must be boolean")
     conditions = (
-        ("rmse_improvement_below_10pct", numeric["rmse_improvement_pct"] >= 10.0),
+        (
+            (
+                "rmse_improvement_undefined"
+                if improvement_undefined
+                else "rmse_improvement_below_10pct"
+            ),
+            improvement is not None and improvement >= 10.0,
+        ),
         ("holm_p_value_not_below_0.05", numeric["holm_p_value"] < 0.05),
         (
             "tab_coverage_more_than_0.05_below_xgb",
@@ -239,10 +385,12 @@ def _validate_primary_record(record: Any, index: int) -> dict[str, Any]:
     return result
 
 
-def _paired_test(delta: np.ndarray, alpha: float) -> tuple[float, float, float]:
-    if len(delta) < 2:
-        raise ValueError("paired comparisons require at least two replications")
-    mean = float(np.mean(delta))
+def _paired_test(delta: np.ndarray, alpha: float) -> tuple[float | None, float | None, float | None]:
+    if len(delta) < 1:
+        raise ValueError("paired comparisons require at least one replication")
+    mean = _checked_mean(delta, "paired mean difference")
+    if len(delta) == 1:
+        return None, None, None
     scale = max(abs(mean), float(np.max(np.abs(delta))))
     numerically_constant = (
         float(np.ptp(delta)) <= 32.0 * np.finfo(float).eps * scale
@@ -267,10 +415,8 @@ def paired_primary_comparisons(
 ) -> pd.DataFrame:
     if isinstance(records, (str, bytes)) or not isinstance(records, Sequence):
         raise ValueError("records must be a sequence")
-    truth = _finite_number(theta0, "theta0")
-    level = _finite_number(alpha, "alpha")
-    if not 0.0 < level < 1.0:
-        raise ValueError("alpha must be strictly between 0 and 1")
+    truth = validate_stage4_theta0(theta0)
+    level = validate_stage4_alpha(alpha)
     checked = [
         _validate_primary_record(record, index)
         for index, record in enumerate(records)
@@ -310,13 +456,26 @@ def paired_primary_comparisons(
         xgb = [by_method["xgboost_tuned"][replication] for replication in replications]
         tab_errors = np.asarray([record["theta"] - truth for record in tab])
         xgb_errors = np.asarray([record["theta"] - truth for record in xgb])
-        delta = tab_errors**2 - xgb_errors**2
+        tab_squared_errors = _checked_squares(
+            tab_errors, "Tab squared errors"
+        )
+        xgb_squared_errors = _checked_squares(
+            xgb_errors, "XGB squared errors"
+        )
+        with np.errstate(over="raise", invalid="raise"):
+            delta = tab_squared_errors - xgb_squared_errors
         if not np.isfinite(delta).all():
-            raise ValueError("paired squared-error differences must be finite")
-        tab_rmse = float(np.sqrt(np.mean(tab_errors**2)))
-        xgb_rmse = float(np.sqrt(np.mean(xgb_errors**2)))
+            raise ValueError(
+                "paired squared-error differences produced nonfinite values"
+            )
+        tab_rmse = float(
+            np.sqrt(_checked_mean(tab_squared_errors, "Tab mean squared error"))
+        )
+        xgb_rmse = float(
+            np.sqrt(_checked_mean(xgb_squared_errors, "XGB mean squared error"))
+        )
         improvement = (
-            0.0
+            None
             if xgb_rmse == 0.0
             else float(100.0 * (xgb_rmse - tab_rmse) / xgb_rmse)
         )
@@ -339,15 +498,17 @@ def paired_primary_comparisons(
                 "tab_rmse": tab_rmse,
                 "xgb_rmse": xgb_rmse,
                 "rmse_improvement_pct": improvement,
-                "mean_squared_error_difference": float(np.mean(delta)),
+                "mean_squared_error_difference": _checked_mean(
+                    delta, "paired mean squared-error difference"
+                ),
                 "difference_ci_lower": ci_lower,
                 "difference_ci_upper": ci_upper,
                 "paired_p_value": p_value,
                 "tab_abs_error_win_rate": float(
                     np.mean(np.abs(tab_errors) < np.abs(xgb_errors))
                 ),
-                "tab_bias": float(np.mean(tab_errors)),
-                "xgb_bias": float(np.mean(xgb_errors)),
+                "tab_bias": _checked_mean(tab_errors, "Tab bias"),
+                "xgb_bias": _checked_mean(xgb_errors, "XGB bias"),
                 "tab_coverage": tab_coverage,
                 "xgb_coverage": xgb_coverage,
                 "tab_coverage_ci_lower": tab_coverage_ci[0],
@@ -358,12 +519,120 @@ def paired_primary_comparisons(
                 "symmetric_success": True,
             }
         )
-    adjusted = holm_adjust([row["paired_p_value"] for row in rows])
+    inference_available = all(row["paired_count"] >= 2 for row in rows)
+    adjusted = (
+        holm_adjust([row["paired_p_value"] for row in rows])
+        if inference_available else [None] * len(rows)
+    )
     completed = []
     for row, holm_p_value in zip(rows, adjusted, strict=True):
-        row["holm_p_value"] = float(holm_p_value)
-        completed.append(apply_superiority_rule(row))
-    return pd.DataFrame(completed, columns=PRIMARY_COMPARISON_COLUMNS)
+        if inference_available:
+            row["inference_status"] = "available"
+            row["holm_p_value"] = float(holm_p_value)
+            completed.append(apply_superiority_rule(row))
+        else:
+            # Never apply Holm to a subset of an incomplete inference family.
+            row.update(
+                inference_status="implementation_smoke",
+                paired_p_value=None, holm_p_value=None,
+                difference_ci_lower=None, difference_ci_upper=None,
+                superior=False, failed_conditions="inference_unavailable",
+            )
+            completed.append(row)
+    result = pd.DataFrame(completed, columns=PRIMARY_COMPARISON_COLUMNS)
+    _validate_comparison_frame(result)
+    return result
+
+
+def _missing(value: Any) -> bool:
+    return value is None or (
+        isinstance(value, (float, np.floating)) and np.isnan(value)
+    )
+
+
+def _validate_comparison_frame(frame: pd.DataFrame) -> None:
+    if list(frame.columns) != PRIMARY_COMPARISON_COLUMNS or frame.empty:
+        raise ValueError("primary comparison schema is invalid")
+    nonnegative = {
+        "paired_count",
+        "tab_rmse",
+        "xgb_rmse",
+        "paired_p_value",
+        "holm_p_value",
+        "tab_abs_error_win_rate",
+        "tab_coverage",
+        "xgb_coverage",
+        "tab_coverage_ci_lower",
+        "tab_coverage_ci_upper",
+        "xgb_coverage_ci_lower",
+        "xgb_coverage_ci_upper",
+    }
+    numeric = set(PRIMARY_COMPARISON_COLUMNS).difference(
+        {*CELL_COLUMNS, "inference_status", "symmetric_success", "superior", "failed_conditions"}
+    )
+    for index, row in frame.iterrows():
+        unavailable = row["inference_status"] == "implementation_smoke"
+        if row["inference_status"] not in {"available", "implementation_smoke"}:
+            raise ValueError("invalid inference_status")
+        inference_fields = {"paired_p_value", "holm_p_value", "difference_ci_lower", "difference_ci_upper"}
+        if unavailable and (
+            not all(_missing(row[field]) for field in inference_fields)
+            or bool(row["superior"])
+            or row["failed_conditions"] != "inference_unavailable"
+            or not frame["paired_count"].eq(1).any()
+        ):
+            raise ValueError("unavailable inference must not contain inferential claims")
+        for field in numeric:
+            value = row[field]
+            if unavailable and field in inference_fields:
+                continue
+            if field == "rmse_improvement_pct" and _missing(value):
+                if _finite_number(row["xgb_rmse"], "xgb_rmse") != 0.0:
+                    raise ValueError(
+                        "undefined rmse improvement requires zero XGB RMSE"
+                    )
+                continue
+            checked = _finite_number(value, f"comparison {index} {field}")
+            if field in nonnegative and checked < 0.0:
+                raise ValueError(f"comparison {field} must be nonnegative")
+        for field in (
+            "paired_p_value",
+            "holm_p_value",
+            "tab_abs_error_win_rate",
+            "tab_coverage",
+            "xgb_coverage",
+            "tab_coverage_ci_lower",
+            "tab_coverage_ci_upper",
+            "xgb_coverage_ci_lower",
+            "xgb_coverage_ci_upper",
+        ):
+            if unavailable and field in inference_fields:
+                continue
+            if not 0.0 <= float(row[field]) <= 1.0:
+                raise ValueError(f"comparison {field} must be between 0 and 1")
+        if not -1.0 <= float(row["coverage_difference"]) <= 1.0:
+            raise ValueError("comparison coverage difference is out of range")
+        if not isinstance(row["symmetric_success"], (bool, np.bool_)):
+            raise ValueError("comparison symmetric_success must be boolean")
+        if not isinstance(row["superior"], (bool, np.bool_)):
+            raise ValueError("comparison superior must be boolean")
+        if not isinstance(row["failed_conditions"], str):
+            raise ValueError("comparison failed_conditions must be a string")
+        mean_difference = float(row["mean_squared_error_difference"])
+        if not unavailable and not (
+            float(row["difference_ci_lower"])
+            <= mean_difference
+            <= float(row["difference_ci_upper"])
+        ):
+            raise ValueError("comparison difference interval is invalid")
+        for method in ("tab", "xgb"):
+            coverage = float(row[f"{method}_coverage"])
+            if not (
+                float(row[f"{method}_coverage_ci_lower"])
+                <= coverage
+                <= float(row[f"{method}_coverage_ci_upper"])
+            ):
+                raise ValueError(f"comparison {method} coverage interval is invalid")
 
 
 def _method_label(learner_l: str, learner_m: str) -> str:
@@ -410,8 +679,16 @@ def _analysis_record(record: Any, index: int) -> dict[str, Any]:
         "runtime_seconds",
     ):
         result[field] = _finite_number(record.get(field), field)
-    if result["standard_error"] < 0:
-        raise ValueError("standard_error must be nonnegative")
+    for field in (
+        "standard_error",
+        "l_mse",
+        "m_mse",
+        "nuisance_error_product",
+        "residual_d_variance",
+        "runtime_seconds",
+    ):
+        if result[field] < 0:
+            raise ValueError(f"{field} must be nonnegative")
     if result["ci_lower"] > result["theta"] or result["theta"] > result["ci_upper"]:
         raise ValueError("analysis record confidence interval is invalid")
     for target in ("l", "m"):
@@ -442,10 +719,8 @@ def aggregate_stage4(
 ) -> pd.DataFrame:
     if isinstance(records, (str, bytes)) or not isinstance(records, Sequence):
         raise ValueError("records must be a sequence")
-    truth = _finite_number(theta0, "theta0")
-    level = _finite_number(alpha, "alpha")
-    if not 0.0 < level < 1.0:
-        raise ValueError("alpha must be strictly between 0 and 1")
+    truth = validate_stage4_theta0(theta0)
+    level = validate_stage4_alpha(alpha)
     checked = [_analysis_record(record, index) for index, record in enumerate(records)]
     if not checked:
         raise ValueError("analysis records must not be empty")
@@ -477,54 +752,237 @@ def aggregate_stage4(
         )
         peak_values = group["peak_gpu_mb"].dropna().to_numpy(dtype=float)
         empirical_se = (
-            float(np.std(estimates, ddof=1)) if count > 1 else None
+            _checked_std(estimates, "empirical SE") if count > 1 else None
         )
+        squared_errors = _checked_squares(errors, "aggregate squared errors")
         row = dict(zip(group_columns, keys))
         row.update(
             {
                 "replications": count,
-                "bias": float(np.mean(errors)),
-                "rmse": float(np.sqrt(np.mean(errors**2))),
+                "bias": _checked_mean(errors, "aggregate bias"),
+                "rmse": float(
+                    np.sqrt(
+                        _checked_mean(
+                            squared_errors, "aggregate mean squared error"
+                        )
+                    )
+                ),
                 "empirical_se": empirical_se,
-                "mean_reported_se": float(np.mean(group["standard_error"])),
+                "mean_reported_se": _checked_mean(
+                    group["standard_error"], "mean reported SE"
+                ),
                 "coverage": coverage_count / count,
                 "coverage_ci_lower": coverage_interval[0],
                 "coverage_ci_upper": coverage_interval[1],
                 "nominal_coverage_in_exact_interval": (
                     coverage_interval[0] <= 0.95 <= coverage_interval[1]
                 ),
-                "mean_interval_width": float(
-                    np.mean(group["ci_upper"] - group["ci_lower"])
+                "mean_interval_width": _checked_mean(
+                    group["ci_upper"] - group["ci_lower"],
+                    "mean interval width",
                 ),
-                "mean_l_mse": float(np.mean(group["l_mse"])),
-                "mean_m_mse": float(np.mean(group["m_mse"])),
-                "mean_nuisance_error_product": float(
-                    np.mean(group["nuisance_error_product"])
+                "mean_l_mse": _checked_mean(group["l_mse"], "mean l MSE"),
+                "mean_m_mse": _checked_mean(group["m_mse"], "mean m MSE"),
+                "mean_nuisance_error_product": _checked_mean(
+                    group["nuisance_error_product"],
+                    "mean nuisance error product",
                 ),
-                "mean_lm_error_cross": float(np.mean(group["lm_error_cross"])),
-                "mean_residual_d_variance": float(
-                    np.mean(group["residual_d_variance"])
+                "mean_lm_error_cross": _checked_mean(
+                    group["lm_error_cross"], "mean lm error cross"
                 ),
-                "mean_bias_numerator_proxy": float(
-                    np.mean(group["bias_numerator_proxy"])
+                "mean_residual_d_variance": _checked_mean(
+                    group["residual_d_variance"],
+                    "mean residual d variance",
                 ),
-                "mean_theta_proxy": float(np.mean(group["theta_proxy"])),
-                "mean_proxy_error": float(np.mean(group["proxy_error"])),
-                "mean_runtime_seconds": float(np.mean(group["runtime_seconds"])),
-                "mean_l_fit_seconds": float(np.mean(group["l_fit_seconds"])),
-                "mean_m_fit_seconds": float(np.mean(group["m_fit_seconds"])),
-                "mean_total_fit_seconds": float(
-                    np.mean(group["l_fit_seconds"] + group["m_fit_seconds"])
+                "mean_bias_numerator_proxy": _checked_mean(
+                    group["bias_numerator_proxy"],
+                    "mean bias numerator proxy",
+                ),
+                "mean_theta_proxy": _checked_mean(
+                    group["theta_proxy"], "mean theta proxy"
+                ),
+                "mean_proxy_error": _checked_mean(
+                    group["proxy_error"], "mean proxy error"
+                ),
+                "mean_runtime_seconds": _checked_mean(
+                    group["runtime_seconds"], "mean runtime"
+                ),
+                "mean_l_fit_seconds": _checked_mean(
+                    group["l_fit_seconds"], "mean l fit time"
+                ),
+                "mean_m_fit_seconds": _checked_mean(
+                    group["m_fit_seconds"], "mean m fit time"
+                ),
+                "mean_total_fit_seconds": _checked_mean(
+                    group["l_fit_seconds"] + group["m_fit_seconds"],
+                    "mean total fit time",
                 ),
                 "mean_peak_gpu_mb": (
-                    float(np.mean(peak_values)) if len(peak_values) else None
+                    _checked_mean(peak_values, "mean peak GPU memory")
+                    if len(peak_values)
+                    else None
                 ),
                 "gpu_observation_count": len(peak_values),
                 "fallback_count": int(group["fallback_reason"].notna().sum()),
             }
         )
         rows.append(row)
-    return pd.DataFrame(rows, columns=AGGREGATE_COLUMNS)
+    result = pd.DataFrame(rows, columns=AGGREGATE_COLUMNS)
+    _validate_aggregate_frame(result)
+    return result
+
+
+def _validate_aggregate_frame(frame: pd.DataFrame) -> None:
+    if list(frame.columns) != AGGREGATE_COLUMNS or frame.empty:
+        raise ValueError("aggregate schema is invalid")
+    labels = {*CELL_COLUMNS, "method", "learner_l", "learner_m"}
+    booleans = {"nominal_coverage_in_exact_interval"}
+    signed = {
+        "bias",
+        "mean_lm_error_cross",
+        "mean_bias_numerator_proxy",
+        "mean_theta_proxy",
+        "mean_proxy_error",
+    }
+    numeric = set(AGGREGATE_COLUMNS).difference(labels | booleans)
+    for index, row in frame.iterrows():
+        replications = _finite_number(
+            row["replications"], f"aggregate {index} replications"
+        )
+        gpu_count = _finite_number(
+            row["gpu_observation_count"],
+            f"aggregate {index} gpu_observation_count",
+        )
+        for field in numeric:
+            value = row[field]
+            if field == "empirical_se" and _missing(value):
+                if replications != 1.0:
+                    raise ValueError(
+                        "empirical_se may be missing only for one replication"
+                    )
+                continue
+            if field == "mean_peak_gpu_mb" and _missing(value):
+                if gpu_count != 0.0:
+                    raise ValueError(
+                        "mean_peak_gpu_mb missing with GPU observations"
+                    )
+                continue
+            checked = _finite_number(value, f"aggregate {index} {field}")
+            if field not in signed and checked < 0.0:
+                raise ValueError(f"aggregate {field} must be nonnegative")
+        for field in (
+            "coverage",
+            "coverage_ci_lower",
+            "coverage_ci_upper",
+        ):
+            if not 0.0 <= float(row[field]) <= 1.0:
+                raise ValueError(f"aggregate {field} must be between 0 and 1")
+        if not isinstance(
+            row["nominal_coverage_in_exact_interval"], (bool, np.bool_)
+        ):
+            raise ValueError(
+                "nominal_coverage_in_exact_interval must be boolean"
+            )
+        for field in ("replications", "gpu_observation_count", "fallback_count"):
+            value = float(row[field])
+            if not value.is_integer():
+                raise ValueError(f"aggregate {field} must be an integer")
+        if replications < 1.0:
+            raise ValueError("aggregate replications must be positive")
+        if gpu_count > replications or float(row["fallback_count"]) > replications:
+            raise ValueError("aggregate diagnostic count exceeds replications")
+        coverage = float(row["coverage"])
+        lower = float(row["coverage_ci_lower"])
+        upper = float(row["coverage_ci_upper"])
+        if not lower <= coverage <= upper:
+            raise ValueError("aggregate coverage interval is invalid")
+        nominal = lower <= 0.95 <= upper
+        if bool(row["nominal_coverage_in_exact_interval"]) != nominal:
+            raise ValueError("aggregate nominal coverage flag is inconsistent")
+
+
+def _validate_ranking_frame(frame: pd.DataFrame) -> None:
+    if list(frame.columns) != RANKING_COLUMNS or len(frame) != 24:
+        raise ValueError("screening ranking schema is invalid")
+    if frame[CELL_COLUMNS].duplicated().any():
+        raise ValueError("screening ranking contains duplicate cells")
+    for index, row in frame.iterrows():
+        if not all(isinstance(row[field], str) and row[field] for field in CELL_COLUMNS[:2]):
+            raise ValueError("screening ranking labels must be nonempty strings")
+        for field in ("n", "p"):
+            value = _finite_number(row[field], f"ranking {index} {field}")
+            if value < 1.0 or not value.is_integer():
+                raise ValueError(f"screening ranking {field} must be positive integer")
+        _finite_number(
+            row["mean_paired_squared_error_difference"],
+            f"ranking {index} score",
+        )
+        if not isinstance(row["selection_rule"], str) or not row["selection_rule"]:
+            raise ValueError("screening ranking selection_rule must be nonempty")
+
+
+def _validate_analysis_outputs(analysis: Mapping[str, pd.DataFrame]) -> None:
+    required = {
+        "screening_summary",
+        "screening_cell_ranking",
+        "confirmation_summary",
+        "primary_paired_comparisons",
+        "coverage_diagnostics",
+        "nuisance_diagnostics",
+    }
+    if set(analysis) != required:
+        raise ValueError("analysis output tables are incomplete")
+    _validate_aggregate_frame(analysis["screening_summary"])
+    _validate_aggregate_frame(analysis["confirmation_summary"])
+    _validate_comparison_frame(analysis["primary_paired_comparisons"])
+    _validate_ranking_frame(analysis["screening_cell_ranking"])
+    expected_lengths = {
+        "screening_summary": 240,
+        "screening_cell_ranking": 24,
+        "confirmation_summary": 60,
+        "primary_paired_comparisons": 6,
+        "coverage_diagnostics": 60,
+        "nuisance_diagnostics": 60,
+    }
+    for name, length in expected_lengths.items():
+        if len(analysis[name]) != length:
+            raise ValueError(f"analysis table {name} has an invalid row count")
+    confirmation = analysis["confirmation_summary"]
+    expected_diagnostics = {
+        "coverage_diagnostics": confirmation[COVERAGE_COLUMNS],
+        "nuisance_diagnostics": confirmation[NUISANCE_COLUMNS],
+    }
+    for name, expected in expected_diagnostics.items():
+        frame = analysis[name]
+        required_columns = (
+            COVERAGE_COLUMNS if name == "coverage_diagnostics" else NUISANCE_COLUMNS
+        )
+        if list(frame.columns) != required_columns:
+            raise ValueError(f"analysis table {name} schema is invalid")
+        if not frame.equals(expected):
+            raise ValueError(f"analysis table {name} does not match confirmation summary")
+    for name, frame in analysis.items():
+        if not isinstance(frame, pd.DataFrame) or frame.empty:
+            raise ValueError(f"analysis table {name} must be a nonempty frame")
+        for column in frame.columns:
+            for value in frame[column]:
+                if _missing(value):
+                    if column not in {
+                        "empirical_se",
+                        "mean_peak_gpu_mb",
+                        "rmse_improvement_pct",
+                        "paired_p_value",
+                        "holm_p_value",
+                        "difference_ci_lower",
+                        "difference_ci_upper",
+                    }:
+                        raise ValueError(
+                            f"analysis table {name}/{column} has missing values"
+                        )
+                elif isinstance(value, (bool, np.bool_)):
+                    continue
+                elif isinstance(value, (int, float, np.integer, np.floating)):
+                    _finite_number(value, f"analysis table {name}/{column}")
 
 
 def _validate_record_universe(
@@ -567,6 +1025,28 @@ def _validate_record_universe(
     return [validated[pair.key] for pair in expected_pairs]
 
 
+def _selection_semantic_view(selection: Mapping[str, Any]) -> dict[str, Any]:
+    def ordered_rows(name: str) -> list[dict[str, Any]]:
+        return sorted(
+            (dict(row) for row in selection[name]),
+            key=lambda row: (
+                row["panel"],
+                row["scenario"],
+                row["n"],
+                row["p"],
+            ),
+        )
+
+    return {
+        key: selection[key]
+        for key in selection
+        if key not in {"screening_ranking", "cells"}
+    } | {
+        "screening_ranking": ordered_rows("screening_ranking"),
+        "cells": ordered_rows("cells"),
+    }
+
+
 def build_stage4_analysis(
     screening_records: Sequence[Mapping[str, Any]],
     confirmation_records: Sequence[Mapping[str, Any]],
@@ -576,8 +1056,10 @@ def build_stage4_analysis(
     execution_profile: str = "full",
     alpha: float = 0.05,
 ) -> dict[str, pd.DataFrame]:
+    level = validate_stage4_alpha(alpha)
     if execution_profile not in {"full", "fast"}:
         raise ValueError("execution_profile must be 'full' or 'fast'")
+    _validate_fixed_stage4_design(config)
     validate_frozen_tuning(config, frozen_tuning, execution_profile)
     selected_cells = validate_stage4_selection(
         config, selected_confirmation, execution_profile
@@ -587,10 +1069,10 @@ def build_stage4_analysis(
         if execution_profile == "fast"
         else int(config["screening"]["replications"])
     )
-    confirmation_replications = int(
-        config["confirmation"]["smoke_replications"]
+    confirmation_replications = (
+        1
         if execution_profile == "fast"
-        else config["confirmation"]["replications"]
+        else int(config["confirmation"]["replications"])
     )
     screening_pairs = tuple(
         iter_stage4_pairs(
@@ -601,6 +1083,26 @@ def build_stage4_analysis(
             fast=execution_profile == "fast",
         )
     )
+    expected_screening_count = 24 * screening_replications * 10
+    expected_confirmation_count = 6 * confirmation_replications * 10
+    if len(screening_pairs) != expected_screening_count:
+        raise ValueError("strict config did not produce the exact screening universe")
+    screening = _validate_record_universe(
+        screening_records, screening_pairs, "screening"
+    )
+    recomputed_selection = select_confirmation_cells(
+        screening,
+        config,
+        frozen_tuning,
+        expected_replications=screening_replications,
+        execution_profile=execution_profile,
+    )
+    if _selection_semantic_view(
+        selected_confirmation
+    ) != _selection_semantic_view(recomputed_selection):
+        raise ValueError(
+            "selected confirmation selection does not match supplied screening"
+        )
     confirmation_pairs = tuple(
         iter_stage4_pairs(
             config,
@@ -611,30 +1113,23 @@ def build_stage4_analysis(
             fast=execution_profile == "fast",
         )
     )
-    expected_screening_count = 24 * screening_replications * 10
-    expected_confirmation_count = 6 * confirmation_replications * 10
-    if len(screening_pairs) != expected_screening_count:
-        raise ValueError("strict config did not produce the exact screening universe")
     if len(confirmation_pairs) != expected_confirmation_count:
         raise ValueError(
             "strict config did not produce the exact confirmation universe"
         )
-    screening = _validate_record_universe(
-        screening_records, screening_pairs, "screening"
-    )
     confirmation = _validate_record_universe(
         confirmation_records, confirmation_pairs, "confirmation"
     )
-    truth = _finite_number(config.get("theta0"), "theta0")
-    screening_summary = aggregate_stage4(screening, truth, alpha)
-    confirmation_summary = aggregate_stage4(confirmation, truth, alpha)
+    truth = validate_stage4_theta0(config.get("theta0"))
+    screening_summary = aggregate_stage4(screening, truth, level)
+    confirmation_summary = aggregate_stage4(confirmation, truth, level)
     primary_records = [
         record
         for pair, record in zip(confirmation_pairs, confirmation, strict=True)
         if pair.learner_l == pair.learner_m
         and pair.learner_l in PRIMARY_METHODS
     ]
-    comparisons = paired_primary_comparisons(primary_records, truth, alpha)
+    comparisons = paired_primary_comparisons(primary_records, truth, level)
     expected_cells = {
         (cell.panel, cell.scenario, cell.n, cell.p) for cell in selected_cells
     }
@@ -644,56 +1139,19 @@ def build_stage4_analysis(
     }
     if len(comparisons) != 6 or actual_cells != expected_cells:
         raise ValueError("primary comparisons must cover exactly six frozen cells")
-    ranking_columns = [
-        *CELL_COLUMNS,
-        "mean_paired_squared_error_difference",
-        "selection_rule",
-    ]
     screening_ranking = pd.DataFrame(
-        selected_confirmation["screening_ranking"], columns=ranking_columns
+        selected_confirmation["screening_ranking"], columns=RANKING_COLUMNS
     ).sort_values(CELL_COLUMNS, kind="stable", ignore_index=True)
-    coverage_columns = [
-        *CELL_COLUMNS,
-        "method",
-        "learner_l",
-        "learner_m",
-        "replications",
-        "coverage",
-        "coverage_ci_lower",
-        "coverage_ci_upper",
-        "nominal_coverage_in_exact_interval",
-        "mean_interval_width",
-    ]
-    nuisance_columns = [
-        *CELL_COLUMNS,
-        "method",
-        "learner_l",
-        "learner_m",
-        "replications",
-        "mean_l_mse",
-        "mean_m_mse",
-        "mean_nuisance_error_product",
-        "mean_lm_error_cross",
-        "mean_residual_d_variance",
-        "mean_bias_numerator_proxy",
-        "mean_theta_proxy",
-        "mean_proxy_error",
-        "mean_runtime_seconds",
-        "mean_l_fit_seconds",
-        "mean_m_fit_seconds",
-        "mean_total_fit_seconds",
-        "mean_peak_gpu_mb",
-        "gpu_observation_count",
-        "fallback_count",
-    ]
-    return {
+    analysis = {
         "screening_summary": screening_summary,
         "screening_cell_ranking": screening_ranking,
         "confirmation_summary": confirmation_summary,
         "primary_paired_comparisons": comparisons,
-        "coverage_diagnostics": confirmation_summary[coverage_columns].copy(),
-        "nuisance_diagnostics": confirmation_summary[nuisance_columns].copy(),
+        "coverage_diagnostics": confirmation_summary[COVERAGE_COLUMNS].copy(),
+        "nuisance_diagnostics": confirmation_summary[NUISANCE_COLUMNS].copy(),
     }
+    _validate_analysis_outputs(analysis)
+    return analysis
 
 
 def _markdown_comparison_table(comparisons: pd.DataFrame) -> list[str]:
@@ -706,12 +1164,34 @@ def _markdown_comparison_table(comparisons: pd.DataFrame) -> list[str]:
     for row in comparisons.to_dict("records"):
         display = dict(row)
         display["superior"] = "是" if row["superior"] else "否"
+        unavailable = row["inference_status"] == "implementation_smoke"
+        display["difference_interval"] = (
+            "不可用" if unavailable else
+            f"[{row['difference_ci_lower']:.6g}, {row['difference_ci_upper']:.6g}]"
+        )
+        display["paired_p"] = "不可用" if unavailable else f"{row['paired_p_value']:.6g}"
+        display["holm_p"] = "不可用" if unavailable else f"{row['holm_p_value']:.6g}"
+        if unavailable:
+            display["superior"] = "未判定"
+        improvement = row["rmse_improvement_pct"]
+        if _missing(improvement):
+            if row["xgb_rmse"] == 0.0 and row["tab_rmse"] == 0.0:
+                display["rmse_improvement"] = (
+                    "未定义（两者 RMSE 均为 0，结果为平局）"
+                )
+            elif row["xgb_rmse"] == 0.0 and row["tab_rmse"] > 0.0:
+                display["rmse_improvement"] = (
+                    "未定义（XGB RMSE 为 0，Tab 明确更差）"
+                )
+            else:
+                raise ValueError("invalid undefined RMSE improvement")
+        else:
+            display["rmse_improvement"] = f"{float(improvement):.2f}%"
         lines.append(
             "| {panel} | {scenario} | {n} | {p} | {tab_rmse:.6f} | "
-            "{xgb_rmse:.6f} | {rmse_improvement_pct:.2f}% | "
+            "{xgb_rmse:.6f} | {rmse_improvement} | "
             "{mean_squared_error_difference:.6g} | "
-            "[{difference_ci_lower:.6g}, {difference_ci_upper:.6g}] | "
-            "{paired_p_value:.6g} | {holm_p_value:.6g} | "
+            "{difference_interval} | {paired_p} | {holm_p} | "
             "{tab_abs_error_win_rate:.3f} | {tab_coverage:.3f} | "
             "{xgb_coverage:.3f} | {superior} | {failed_conditions} |".format(
                 **display
@@ -752,6 +1232,18 @@ def write_stage4_report(
     confirmation = analysis["confirmation_summary"]
     if len(comparisons) != 6:
         raise ValueError("Chinese report requires exactly six primary comparisons")
+    if comparisons["inference_status"].eq("implementation_smoke").any():
+        lines = [
+            "# Stage 4 单次快速流程测试（非正式实验结果）", "",
+            "仅验证流程，不作统计推断。配对 p 值、Holm p 值和差值置信区间不可用。",
+            "这是 1 次快速实现测试，不是设计中的 5 次预检，也不替代 100 次正式确认。",
+            "下列估计和覆盖率仅用于检查输出；不据此判断优越性、显著性或适用边界。", "",
+            *_markdown_comparison_table(comparisons), "",
+        ]
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines), encoding="utf-8")
+        return path
     qualifying = comparisons[comparisons["superior"].eq(True)]
     count = len(qualifying)
     standard_structures = set(
@@ -761,12 +1253,12 @@ def write_stage4_report(
         panel_claim = (
             "没有配置满足预设优越性规则；完整负面结果与平滑 DGP 结果共同界定适用边界。"
         )
-    elif len(standard_structures) >= 2:
-        panel_claim = "优势跨越多个标准树结构。"
-    elif qualifying["panel"].eq("small_n_high_p").all():
-        panel_claim = "优势主要集中于小样本高维树状环境。"
     elif count == 1:
         panel_claim = "仅一个配置满足条件，因此只作配置特异性报告，不推广为一般树状结论。"
+    elif len(standard_structures) >= 2:
+        panel_claim = "优势跨越多个标准树结构。"
+    elif count >= 2 and qualifying["panel"].eq("small_n_high_p").all():
+        panel_claim = "优势主要集中于小样本高维树状环境。"
     else:
         panel_claim = "优势分布不足以支持预设的面板层推广，只按配置报告。"
     nuisance_only = _nuisance_only_cells(comparisons, confirmation)
@@ -958,6 +1450,7 @@ def write_stage4_figures(
 def _write_analysis_bundle(
     analysis: Mapping[str, pd.DataFrame], output: Path
 ) -> list[Path]:
+    _validate_analysis_outputs(analysis)
     outputs = []
     for name in (
         "screening_summary",
@@ -1008,6 +1501,7 @@ def write_stage4_analysis(
         execution_profile=execution_profile,
         alpha=alpha,
     )
+    _validate_analysis_outputs(analysis)
     output = Path(output_dir)
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(
@@ -1018,7 +1512,6 @@ def write_stage4_analysis(
         if output.exists():
             if not output.is_dir():
                 raise ValueError("analysis output path must be a directory")
-            shutil.copytree(output, staging, dirs_exist_ok=True)
         staged_paths = _write_analysis_bundle(analysis, staging)
         relative_paths = [path.relative_to(staging) for path in staged_paths]
         if output.exists():

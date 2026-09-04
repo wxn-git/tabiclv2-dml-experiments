@@ -5,7 +5,7 @@ from collections.abc import Mapping
 import json
 from pathlib import Path
 
-from tabdml.stage4_analysis import write_stage4_analysis
+from tabdml.stage4_analysis import validate_stage4_alpha, write_stage4_analysis
 from tabdml.stage4_config import load_stage4_config
 
 
@@ -66,6 +66,7 @@ def _read_record_directory(root: Path, label: str) -> list[Mapping]:
 
 def main() -> int:
     args = parse_args()
+    validate_stage4_alpha(args.alpha)
     execution_profile = "fast" if args.fast else (args.profile or "full")
     config = load_stage4_config(_resolve(args.config))
     frozen_tuning = _read_json_object(
