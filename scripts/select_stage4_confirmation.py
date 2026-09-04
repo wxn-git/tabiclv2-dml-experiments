@@ -18,6 +18,7 @@ def parse_args():
     parser.add_argument(
         "--screening-root", default="results/stage4_tree_screening_raw"
     )
+    parser.add_argument("--tuned-models", required=True)
     parser.add_argument(
         "--output",
         default="results/stage4_tree_screening/selected_confirmation_cells.json",
@@ -49,15 +50,29 @@ def _read_screening_records(root: Path) -> list[Mapping]:
     return records
 
 
+def _read_json_object(path: Path, label: str) -> Mapping:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as error:
+        raise ValueError(f"Invalid {label} JSON: {path}") from error
+    if not isinstance(value, Mapping):
+        raise ValueError(f"Invalid {label} JSON object: {path}")
+    return value
+
+
 def main() -> int:
     args = parse_args()
     execution_profile = "fast" if args.fast else (args.profile or "full")
     config = load_stage4_config(_resolve(args.config))
+    frozen_tuning = _read_json_object(
+        _resolve(args.tuned_models), "frozen tuning"
+    )
     records = _read_screening_records(_resolve(args.screening_root))
     write_confirmation_cells(
         records,
         _resolve(args.output),
         config,
+        frozen_tuning,
         expected_replications=args.expected_replications,
         execution_profile=execution_profile,
     )

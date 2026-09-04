@@ -8,15 +8,15 @@ from typing import Any
 
 import numpy as np
 
-from .stage4_config import TreeBenchmarkCell, iter_tree_cells
+from .stage4_config import iter_tree_cells
 from .stage4_experiment import (
     STAGE4_SELECTION_RULE,
-    Stage4PairSpec,
+    iter_stage4_pairs,
     stage4_configuration_fingerprint,
+    validate_frozen_tuning,
     validate_stage4_record,
     validate_stage4_selection,
 )
-from .stage4_tuning import iter_tuning_tasks
 
 
 _SELECTION_METHODS = ("tabiclv2_1", "xgboost_tuned")
@@ -72,181 +72,71 @@ def _required_replications(
     return required
 
 
-def _allowed_tuned_hashes(
-    config: Mapping[str, Any], execution_profile: str
-) -> dict[tuple[str, str, int, int, str], frozenset[str]]:
-    hashes: dict[tuple[str, str, int, int, str], set[str]] = {}
-    for task in iter_tuning_tasks(
-        config,
-        replications=1,
-        fast=execution_profile == "fast",
-    ):
-        identity = (task.panel, task.scenario, task.n, task.p, task.target)
-        hashes.setdefault(identity, set()).add(task.config_hash)
-    return {identity: frozenset(values) for identity, values in hashes.items()}
-
-
-def _record_cell(
-    record: Mapping[str, Any], configured: Mapping[str, TreeBenchmarkCell]
-) -> TreeBenchmarkCell:
-    panel = record.get("panel")
-    scenario = record.get("scenario")
-    n = record.get("n")
-    p = record.get("p")
-    if (
-        not isinstance(panel, str)
-        or not isinstance(scenario, str)
-        or isinstance(n, bool)
-        or not isinstance(n, int)
-        or isinstance(p, bool)
-        or not isinstance(p, int)
-    ):
-        raise ValueError("Relevant screening record has an invalid configured cell")
-    key = f"{panel}__{scenario}__n{n}__p{p}"
-    if key not in configured:
-        raise ValueError(f"Relevant screening record is not a configured cell: {key}")
-    return configured[key]
-
-
-def _record_pair(
-    record: Mapping[str, Any],
-    cell: TreeBenchmarkCell,
-    config: Mapping[str, Any],
-    execution_profile: str,
-    method: str,
-    replication: int,
-    allowed_hashes: Mapping[tuple[str, str, int, int, str], frozenset[str]],
-) -> Stage4PairSpec:
-    l_hash = record.get("learner_l_config_hash")
-    m_hash = record.get("learner_m_config_hash")
-    if not isinstance(l_hash, str) or not l_hash:
-        raise ValueError("Relevant screening record learner_l_config_hash mismatch")
-    if not isinstance(m_hash, str) or not m_hash:
-        raise ValueError("Relevant screening record learner_m_config_hash mismatch")
-    if method == "tabiclv2_1":
-        if l_hash != "default" or m_hash != "default":
-            raise ValueError("TabICLv2 screening record config_hash mismatch")
-    else:
-        base = (cell.panel, cell.scenario, cell.n, cell.p)
-        if l_hash not in allowed_hashes[(*base, "l")]:
-            raise ValueError("Tuned-XGBoost learner_l_config_hash mismatch")
-        if m_hash not in allowed_hashes[(*base, "m")]:
-            raise ValueError("Tuned-XGBoost learner_m_config_hash mismatch")
-    return Stage4PairSpec(
-        stage=str(config["screening"]["stage"]),
-        seed_namespace=str(config["screening"]["seed_namespace"]),
-        panel=cell.panel,
-        scenario=cell.scenario,
-        n=cell.n,
-        p=cell.p,
-        replication=replication,
-        learner_l=method,
-        learner_m=method,
-        folds_count=int(config["folds"]),
-        theta0=float(config["theta0"]),
-        learner_l_config_hash=l_hash,
-        learner_m_config_hash=m_hash,
-        execution_profile=execution_profile,
-    )
-
-
 def select_confirmation_cells(
     records: Sequence[Mapping[str, Any]],
     config: Mapping[str, Any],
+    frozen_tuning: Mapping[str, Any],
     expected_replications: int | None = None,
     execution_profile: str = "full",
 ) -> dict[str, Any]:
     cells = iter_tree_cells(config)
-    configured = {cell.key: cell for cell in cells}
     replications = _required_replications(
         config, execution_profile, expected_replications
     )
     if isinstance(records, (str, bytes)) or not isinstance(records, Sequence):
         raise ValueError("screening records must be a sequence")
 
-    allowed_hashes = _allowed_tuned_hashes(config, execution_profile)
-    selected_records: dict[tuple[str, int, str], Mapping[str, Any]] = {}
-    selected_task_keys: set[str] = set()
-    tuned_hashes_by_cell: dict[str, tuple[str, str]] = {}
+    validate_frozen_tuning(config, frozen_tuning, execution_profile)
+    expected_pairs = tuple(
+        iter_stage4_pairs(
+            config,
+            "screening",
+            frozen_tuning,
+            replications=replications,
+            fast=execution_profile == "fast",
+        )
+    )
+    expected_by_key = {pair.key: pair for pair in expected_pairs}
+    if len(expected_by_key) != len(expected_pairs):
+        raise ValueError("Expected Stage 4 screening task keys must be unique")
+
+    validated_records: dict[str, Mapping[str, Any]] = {}
     for index, record in enumerate(records):
         if not isinstance(record, Mapping):
             raise ValueError(f"screening record {index} must be a mapping")
-        learner_l = record.get("learner_l")
-        learner_m = record.get("learner_m")
-        touches_selection = (
-            learner_l in _SELECTION_METHODS or learner_m in _SELECTION_METHODS
-        )
-        if not touches_selection:
-            continue
-        if learner_l != learner_m or learner_l not in _SELECTION_METHODS:
-            raise ValueError("Relevant screening record has asymmetric methods")
-        method = str(learner_l)
-        if record.get("status") != "success":
-            raise ValueError("Relevant screening record status must be success")
-
-        cell = _record_cell(record, configured)
-        replication = record.get("replication")
-        if (
-            isinstance(replication, bool)
-            or not isinstance(replication, int)
-            or replication not in range(replications)
-        ):
-            raise ValueError("Relevant screening record replication is unexpected")
-        pair = _record_pair(
-            record,
-            cell,
-            config,
-            execution_profile,
-            method,
-            replication,
-            allowed_hashes,
-        )
-        validate_stage4_record(record, pair)
-
         task_key = record.get("task_key")
-        if task_key in selected_task_keys:
+        if not isinstance(task_key, str) or task_key not in expected_by_key:
+            raise ValueError(f"Invalid screening record: unexpected task_key {task_key}")
+        if task_key in validated_records:
             raise ValueError(f"duplicate screening task_key: {task_key}")
-        selected_task_keys.add(str(task_key))
-        identity = (cell.key, replication, method)
-        if identity in selected_records:
-            raise ValueError(
-                "duplicate screening cell/method/replication identity: "
-                f"{cell.key}/{method}/{replication}"
-            )
-        selected_records[identity] = record
+        validate_stage4_record(record, expected_by_key[task_key])
+        validated_records[task_key] = record
 
-        if method == "xgboost_tuned":
-            hashes = (
-                str(record["learner_l_config_hash"]),
-                str(record["learner_m_config_hash"]),
-            )
-            previous = tuned_hashes_by_cell.setdefault(cell.key, hashes)
-            if previous != hashes:
-                raise ValueError(
-                    f"Tuned-XGBoost config_hash changed within cell {cell.key}"
-                )
-
-    expected_identities = {
-        (cell.key, replication, method)
-        for cell in cells
-        for replication in range(replications)
-        for method in _SELECTION_METHODS
-    }
-    if set(selected_records) != expected_identities:
-        missing = expected_identities.difference(selected_records)
-        extra = set(selected_records).difference(expected_identities)
+    if set(validated_records) != set(expected_by_key):
+        missing = set(expected_by_key).difference(validated_records)
         raise ValueError(
-            "Screening records must contain complete paired replications for "
-            f"all 24 configured cells (missing={len(missing)}, extra={len(extra)})"
+            "Screening records must contain the complete screening task universe "
+            f"for all 24 configured cells (missing={len(missing)})"
         )
+
+    primary_records = {
+        (
+            f"{pair.panel}__{pair.scenario}__n{pair.n}__p{pair.p}",
+            pair.replication,
+            pair.learner_l,
+        ): validated_records[pair.key]
+        for pair in expected_pairs
+        if pair.learner_l == pair.learner_m
+        and pair.learner_l in _SELECTION_METHODS
+    }
 
     theta0 = _finite_number(config["theta0"], "theta0")
     ranking = []
     for cell in cells:
         deltas = []
         for replication in range(replications):
-            tab = selected_records[(cell.key, replication, "tabiclv2_1")]
-            xgb = selected_records[(cell.key, replication, "xgboost_tuned")]
+            tab = primary_records[(cell.key, replication, "tabiclv2_1")]
+            xgb = primary_records[(cell.key, replication, "xgboost_tuned")]
             deltas.append(
                 paired_squared_error_advantage(
                     tab.get("theta"), xgb.get("theta"), theta0
@@ -299,12 +189,14 @@ def write_confirmation_cells(
     records: Sequence[Mapping[str, Any]],
     output_path: str | Path,
     config: Mapping[str, Any],
+    frozen_tuning: Mapping[str, Any],
     expected_replications: int | None = None,
     execution_profile: str = "full",
 ) -> dict[str, Any]:
     selected = select_confirmation_cells(
         records,
         config,
+        frozen_tuning,
         expected_replications=expected_replications,
         execution_profile=execution_profile,
     )

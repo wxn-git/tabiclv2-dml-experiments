@@ -10,10 +10,12 @@ import pytest
 
 from scripts import select_stage4_confirmation
 from tabdml.config import derive_seed
+from tabdml.stage3b_screen import _params_hash
 from tabdml.stage4_config import iter_tree_cells, load_stage4_config
 from tabdml.stage4_experiment import (
     STAGE4_SELECTION_RULE,
     Stage4PairSpec,
+    iter_stage4_pairs,
     stage4_configuration_fingerprint,
     validate_stage4_selection,
 )
@@ -22,7 +24,7 @@ from tabdml.stage4_selection import (
     select_confirmation_cells,
     write_confirmation_cells,
 )
-from tabdml.stage4_tuning import iter_tuning_tasks
+from tabdml.stage4_tuning import tuning_run_fingerprint
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -52,52 +54,65 @@ def config():
     return load_stage4_config(CONFIG_PATH)
 
 
-def _allowed_tuned_hashes(config, execution_profile):
-    hashes = {}
-    for task in iter_tuning_tasks(
-        config,
-        replications=1,
-        fast=execution_profile == "fast",
-    ):
-        key = (task.panel, task.scenario, task.n, task.p, task.target)
-        hashes.setdefault(key, task.config_hash)
-    return hashes
+def _frozen_tuning(config, execution_profile="fast", candidate_index=0):
+    expected_replications = (
+        1
+        if execution_profile == "fast"
+        else config["tuning"]["replications"]
+    )
+    candidate = config["tuning"]["xgboost_candidates"][candidate_index]
+    nominal_params = dict(candidate["params"])
+    params = dict(nominal_params)
+    if execution_profile == "fast":
+        params["n_estimators"] = 20
+    cells = {}
+    for cell in iter_tree_cells(config):
+        cells[cell.key] = {
+            target: {
+                "candidate": candidate["name"],
+                "learner_kind": "xgboost",
+                "execution_profile": execution_profile,
+                "nominal_params": nominal_params,
+                "nominal_config_hash": _params_hash(nominal_params),
+                "params": params,
+                "config_hash": _params_hash(params),
+                "replications": expected_replications,
+                "mean_validation_observed_mse": 1.0,
+                "mean_validation_truth_mse_diagnostic": 1.0,
+                "selection_metric": (
+                    "mean_validation_y_mse"
+                    if target == "l"
+                    else "mean_validation_d_mse"
+                ),
+            }
+            for target in ("l", "m")
+        }
+    return {
+        "tuning_stage": config["tuning"]["stage"],
+        "tuning_seed_namespace": config["tuning"]["seed_namespace"],
+        "tuning_run_fingerprint": tuning_run_fingerprint(
+            config,
+            expected_replications,
+            execution_profile,
+        ),
+        "theta0": config["theta0"],
+        "execution_profile": execution_profile,
+        "selection_metric_l": "mean_validation_y_mse",
+        "selection_metric_m": "mean_validation_d_mse",
+        "expected_replications": expected_replications,
+        "cells": cells,
+    }
+
+
+@pytest.fixture
+def frozen(config):
+    return _frozen_tuning(config)
 
 
 def _screen_record(
-    config,
-    cell,
-    replication,
-    method,
+    pair,
     theta,
-    execution_profile="fast",
-    tuned_hashes=None,
 ):
-    if method == "tabiclv2_1":
-        l_hash = m_hash = "default"
-    else:
-        tuned_hashes = tuned_hashes or _allowed_tuned_hashes(
-            config, execution_profile
-        )
-        base = (cell.panel, cell.scenario, cell.n, cell.p)
-        l_hash = tuned_hashes[(*base, "l")]
-        m_hash = tuned_hashes[(*base, "m")]
-    pair = Stage4PairSpec(
-        stage=config["screening"]["stage"],
-        seed_namespace=config["screening"]["seed_namespace"],
-        panel=cell.panel,
-        scenario=cell.scenario,
-        n=cell.n,
-        p=cell.p,
-        replication=replication,
-        learner_l=method,
-        learner_m=method,
-        folds_count=config["folds"],
-        theta0=float(config["theta0"]),
-        learner_l_config_hash=l_hash,
-        learner_m_config_hash=m_hash,
-        execution_profile=execution_profile,
-    )
     return {
         "task_key": pair.key,
         "stage": pair.stage,
@@ -150,46 +165,53 @@ def _screen_record(
     }
 
 
-def _records(config, execution_profile="fast", tab_multiplier=0.8):
+def _records(
+    config,
+    frozen_tuning,
+    execution_profile="fast",
+    tab_multiplier=0.8,
+):
     replications = (
         1
         if execution_profile == "fast"
         else config["screening"]["replications"]
     )
-    tuned_hashes = _allowed_tuned_hashes(config, execution_profile)
+    cell_indices = {
+        cell.key: index for index, cell in enumerate(iter_tree_cells(config))
+    }
     records = []
-    for cell_index, cell in enumerate(iter_tree_cells(config)):
-        for replication in range(replications):
-            xgb_error = 0.02 + 0.002 * (cell_index % 4) + 0.001 * replication
-            records.append(
-                _screen_record(
-                    config,
-                    cell,
-                    replication,
-                    "xgboost_tuned",
-                    config["theta0"] + xgb_error,
-                    execution_profile,
-                    tuned_hashes,
-                )
-            )
-            records.append(
-                _screen_record(
-                    config,
-                    cell,
-                    replication,
-                    "tabiclv2_1",
-                    config["theta0"] + tab_multiplier * xgb_error,
-                    execution_profile,
-                    tuned_hashes,
-                )
-            )
+    for pair in iter_stage4_pairs(
+        config,
+        "screening",
+        frozen_tuning,
+        replications=replications,
+        fast=execution_profile == "fast",
+    ):
+        cell_key = f"{pair.panel}__{pair.scenario}__n{pair.n}__p{pair.p}"
+        xgb_error = (
+            0.02
+            + 0.002 * (cell_indices[cell_key] % 4)
+            + 0.001 * pair.replication
+        )
+        if pair.learner_l == pair.learner_m == "xgboost_tuned":
+            theta = config["theta0"] + xgb_error
+        elif pair.learner_l == pair.learner_m == "tabiclv2_1":
+            theta = config["theta0"] + tab_multiplier * xgb_error
+        else:
+            theta = config["theta0"] + 0.01
+        records.append(_screen_record(pair, theta))
     return records
 
 
-def _select_fast(config, records=None):
+def _select_fast(config, frozen_tuning, records=None):
     return select_confirmation_cells(
-        _records(config) if records is None else records,
+        (
+            _records(config, frozen_tuning)
+            if records is None
+            else records
+        ),
         config,
+        frozen_tuning,
         execution_profile="fast",
     )
 
@@ -209,8 +231,52 @@ def test_paired_squared_error_advantage_rejects_overflowed_result():
         paired_squared_error_advantage(1e308, 1e308, -1e308)
 
 
-def test_selector_emits_exact_task5_contract_and_all_24_scores(config):
-    selected = _select_fast(config)
+def test_selector_requires_frozen_tuning(config, frozen):
+    primary_records = [
+        record
+        for record in _records(config, frozen)
+        if record["learner_l"] == record["learner_m"]
+        and record["learner_l"] in {"tabiclv2_1", "xgboost_tuned"}
+    ]
+
+    with pytest.raises(TypeError, match="frozen_tuning"):
+        select_confirmation_cells(
+            primary_records,
+            config,
+            execution_profile="fast",
+        )
+
+
+def test_selector_accepts_exact_task5_universe_and_emits_contract(config, frozen):
+    records = _records(config, frozen)
+    first = iter_tree_cells(config)[0]
+    first_pairs = {
+        (record["learner_l"], record["learner_m"])
+        for record in records
+        if (
+            record["panel"],
+            record["scenario"],
+            record["n"],
+            record["p"],
+            record["replication"],
+        )
+        == (first.panel, first.scenario, first.n, first.p, 0)
+    }
+    assert len(records) == 24 * 10
+    assert first_pairs == {
+        ("tabiclv2_1", "tabiclv2_1"),
+        ("tabiclv2_8", "tabiclv2_8"),
+        ("xgboost", "xgboost"),
+        ("xgboost_tuned", "xgboost_tuned"),
+        ("extra_trees", "extra_trees"),
+        ("oracle", "oracle"),
+        ("oracle", "xgboost_tuned"),
+        ("xgboost_tuned", "oracle"),
+        ("oracle", "tabiclv2_1"),
+        ("tabiclv2_1", "oracle"),
+    }
+
+    selected = _select_fast(config, frozen, records)
 
     assert set(selected) == SELECTION_FIELDS
     assert selected["execution_profile"] == "fast"
@@ -235,8 +301,14 @@ def test_selector_emits_exact_task5_contract_and_all_24_scores(config):
     assert validate_stage4_selection(config, selected, "fast")
 
 
-def test_selector_freezes_six_cells_when_every_tab_score_is_positive(config):
-    selected = _select_fast(config, _records(config, tab_multiplier=1.2))
+def test_selector_freezes_six_cells_when_every_tab_score_is_positive(
+    config, frozen
+):
+    selected = _select_fast(
+        config,
+        frozen,
+        _records(config, frozen, tab_multiplier=1.2),
+    )
 
     assert len(selected["cells"]) == 6
     assert all(
@@ -245,9 +317,9 @@ def test_selector_freezes_six_cells_when_every_tab_score_is_positive(config):
     )
 
 
-def test_selector_breaks_score_ties_by_n_then_p(config):
-    records = _records(config, tab_multiplier=1.0)
-    selected = _select_fast(config, records)
+def test_selector_breaks_score_ties_by_n_then_p(config, frozen):
+    records = _records(config, frozen, tab_multiplier=1.0)
+    selected = _select_fast(config, frozen, records)
 
     expected = {
         ("standard", scenario, 1000, 10) for scenario in config["structures"]
@@ -261,24 +333,60 @@ def test_selector_breaks_score_ties_by_n_then_p(config):
     } == expected
 
 
-def test_selector_ignores_records_for_unselected_stage4_methods(config):
-    records = _records(config)
-    records.append(
-        {
-            "task_key": "irrelevant-failure",
-            "status": "failed",
-            "learner_l": "extra_trees",
-            "learner_m": "extra_trees",
-        }
+def test_selector_rejects_malformed_failed_nonprimary_record(config, frozen):
+    records = _records(config, frozen)
+    extra_trees = next(
+        record
+        for record in records
+        if record["learner_l"] == record["learner_m"] == "extra_trees"
     )
+    extra_trees["status"] = "failed"
+    extra_trees.pop("theta")
 
-    assert len(_select_fast(config, records)["screening_ranking"]) == 24
+    with pytest.raises(ValueError, match="status mismatch"):
+        _select_fast(config, frozen, records)
+
+
+def test_selector_rejects_missing_nonprimary_oracle_diagnostic(config, frozen):
+    records = _records(config, frozen)
+    records.pop()
+
+    with pytest.raises(ValueError, match="complete screening task universe"):
+        _select_fast(config, frozen, records)
+
+
+def test_selector_rejects_failed_oracle_diagnostic(config, frozen):
+    records = _records(config, frozen)
+    oracle_diagnostic = next(
+        record
+        for record in records
+        if record["learner_l"] == "oracle"
+        and record["learner_m"] == "xgboost_tuned"
+    )
+    oracle_diagnostic["status"] = "failed"
+
+    with pytest.raises(ValueError, match="status mismatch"):
+        _select_fast(config, frozen, records)
+
+
+def test_selector_rejects_unknown_method_record(config, frozen):
+    records = _records(config, frozen)
+    unknown = deepcopy(records[0])
+    unknown.update(
+        task_key="unknown-method-task",
+        learner_l="unknown",
+        learner_m="unknown",
+    )
+    records.append(unknown)
+
+    with pytest.raises(ValueError, match="unexpected task_key"):
+        _select_fast(config, frozen, records)
 
 
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
-        (lambda rows: rows.pop(), "complete paired replications"),
+        (lambda rows: rows.pop(), "complete screening task universe"),
         (lambda rows: rows.append(deepcopy(rows[0])), "duplicate"),
         (lambda rows: rows[0].update(status="failed"), "status"),
         (lambda rows: rows[0].update(theta=np.nan), "finite"),
@@ -290,10 +398,10 @@ def test_selector_ignores_records_for_unselected_stage4_methods(config):
         (lambda rows: rows[0].update(theta0=2.0), "theta0 mismatch"),
         (lambda rows: rows[0].update(execution_profile="full"), "execution_profile"),
         (lambda rows: rows[0].update(replication=1), "replication"),
-        (lambda rows: rows[0].update(n=999), "configured cell"),
+        (lambda rows: rows[0].update(n=999), "n mismatch"),
         (
-            lambda rows: rows[0].update(learner_m="tabiclv2_1"),
-            "asymmetric",
+            lambda rows: rows[0].update(learner_m="xgboost_tuned"),
+            "learner_m mismatch",
         ),
         (
             lambda rows: rows[0].update(learner_l_config_hash="stale-hash"),
@@ -302,18 +410,27 @@ def test_selector_ignores_records_for_unselected_stage4_methods(config):
     ],
 )
 def test_selector_rejects_invalid_relevant_record_universes(
-    config, mutation, message
+    config, frozen, mutation, message
 ):
-    records = _records(config)
+    records = _records(config, frozen)
     mutation(records)
 
     with pytest.raises(ValueError, match=message):
-        _select_fast(config, records)
+        _select_fast(config, frozen, records)
 
 
-def test_selector_rejects_a_stale_but_self_consistent_tuned_hash(config):
-    records = _records(config)
-    record = records[0]
+def test_selector_rejects_alternative_valid_candidate_not_frozen(config, frozen):
+    records = _records(config, frozen)
+    record = next(
+        value
+        for value in records
+        if value["learner_l"] == value["learner_m"] == "xgboost_tuned"
+    )
+    alternate = _frozen_tuning(config, candidate_index=1)
+    cell_key = (
+        f"{record['panel']}__{record['scenario']}"
+        f"__n{record['n']}__p{record['p']}"
+    )
     pair = Stage4PairSpec(
         stage=record["stage"],
         seed_namespace=config["screening"]["seed_namespace"],
@@ -326,8 +443,8 @@ def test_selector_rejects_a_stale_but_self_consistent_tuned_hash(config):
         learner_m=record["learner_m"],
         folds_count=record["folds_count"],
         theta0=record["theta0"],
-        learner_l_config_hash="111111111111",
-        learner_m_config_hash="222222222222",
+        learner_l_config_hash=alternate["cells"][cell_key]["l"]["config_hash"],
+        learner_m_config_hash=alternate["cells"][cell_key]["m"]["config_hash"],
         execution_profile=record["execution_profile"],
     )
     record.update(
@@ -336,14 +453,15 @@ def test_selector_rejects_a_stale_but_self_consistent_tuned_hash(config):
         learner_m_config_hash=pair.learner_m_config_hash,
     )
 
-    with pytest.raises(ValueError, match="config_hash"):
-        _select_fast(config, records)
+    with pytest.raises(ValueError, match="unexpected task_key"):
+        _select_fast(config, frozen, records)
 
 
 def test_full_profile_cannot_self_declare_one_replication(config):
+    frozen = _frozen_tuning(config, execution_profile="full")
     one_replication_full = [
         row
-        for row in _records(config, execution_profile="full")
+        for row in _records(config, frozen, execution_profile="full")
         if row["replication"] == 0
     ]
 
@@ -351,23 +469,25 @@ def test_full_profile_cannot_self_declare_one_replication(config):
         select_confirmation_cells(
             one_replication_full,
             config,
+            frozen,
             expected_replications=1,
             execution_profile="full",
         )
 
 
-def test_fast_profile_rejects_any_replication_count_other_than_one(config):
+def test_fast_profile_rejects_any_replication_count_other_than_one(config, frozen):
     with pytest.raises(ValueError, match="fast profile contract"):
         select_confirmation_cells(
-            _records(config),
+            _records(config, frozen),
             config,
+            frozen,
             expected_replications=2,
             execution_profile="fast",
         )
 
 
 def test_write_confirmation_cells_validates_then_writes_atomically(
-    config, tmp_path, monkeypatch
+    config, frozen, tmp_path, monkeypatch
 ):
     output = tmp_path / "nested" / "selection.json"
     replace_calls = []
@@ -380,9 +500,10 @@ def test_write_confirmation_cells_validates_then_writes_atomically(
 
     monkeypatch.setattr("tabdml.stage4_selection.os.replace", observed_replace)
     selected = write_confirmation_cells(
-        _records(config),
+        _records(config, frozen),
         output,
         config,
+        frozen,
         execution_profile="fast",
     )
 
@@ -392,18 +513,19 @@ def test_write_confirmation_cells_validates_then_writes_atomically(
 
 
 def test_write_confirmation_cells_does_not_touch_output_on_invalid_input(
-    config, tmp_path
+    config, frozen, tmp_path
 ):
     output = tmp_path / "selection.json"
     output.write_text('{"sentinel": true}', encoding="utf-8")
-    records = _records(config)
+    records = _records(config, frozen)
     records.pop()
 
-    with pytest.raises(ValueError, match="complete paired replications"):
+    with pytest.raises(ValueError, match="complete screening task universe"):
         write_confirmation_cells(
             records,
             output,
             config,
+            frozen,
             execution_profile="fast",
         )
 
@@ -412,19 +534,22 @@ def test_write_confirmation_cells_does_not_touch_output_on_invalid_input(
 
 @pytest.mark.parametrize("profile_flag", [("--fast",), ("--profile", "fast")])
 def test_selection_cli_resolves_all_paths_from_repository_root(
-    config, tmp_path, monkeypatch, profile_flag
+    config, frozen, tmp_path, monkeypatch, profile_flag
 ):
     config_path = tmp_path / "configs" / "stage4.yaml"
     config_path.parent.mkdir(parents=True)
     config_path.write_text(CONFIG_PATH.read_text(encoding="utf-8"), encoding="utf-8")
     screening_root = tmp_path / "raw"
     screening_root.mkdir()
-    for index, record in enumerate(_records(config)):
+    for index, record in enumerate(_records(config, frozen)):
         (screening_root / f"record-{index}.json").write_text(
             json.dumps(record), encoding="utf-8"
         )
     outside = tmp_path / "outside"
     outside.mkdir()
+    tuned_models = tmp_path / "tuning" / "selected.json"
+    tuned_models.parent.mkdir()
+    tuned_models.write_text(json.dumps(frozen), encoding="utf-8")
     monkeypatch.chdir(outside)
     monkeypatch.setattr(select_stage4_confirmation, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(
@@ -436,6 +561,8 @@ def test_selection_cli_resolves_all_paths_from_repository_root(
             "configs/stage4.yaml",
             "--screening-root",
             "raw",
+            "--tuned-models",
+            "tuning/selected.json",
             "--output",
             "selected/cells.json",
             *profile_flag,
@@ -456,6 +583,9 @@ def test_selection_cli_rejects_self_declared_under_replication(
     config_path.write_text(CONFIG_PATH.read_text(encoding="utf-8"), encoding="utf-8")
     raw = tmp_path / "raw"
     raw.mkdir()
+    frozen = _frozen_tuning(config, execution_profile="full")
+    tuned_models = tmp_path / "selected.json"
+    tuned_models.write_text(json.dumps(frozen), encoding="utf-8")
     monkeypatch.setattr(select_stage4_confirmation, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(
         sys,
@@ -466,6 +596,8 @@ def test_selection_cli_rejects_self_declared_under_replication(
             "stage4.yaml",
             "--screening-root",
             "raw",
+            "--tuned-models",
+            "selected.json",
             "--output",
             "selection.json",
             "--expected-replications",
