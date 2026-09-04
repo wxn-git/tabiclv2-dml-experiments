@@ -12,7 +12,11 @@ def parse_args():
         description="Resumable Stage 4: at most one GPU and eight CPU workers.",
         epilog=(
             "--fast defaults to one implementation-smoke replication. "
-            "Full-model preflight: --phase confirmation --replications 5 (no --fast). "
+            "Independent full-model preflight: --phase confirmation --preflight "
+            "(exactly five replications, no --fast). "
+            "--replications 5 alone is a formal subset, not preflight. "
+            "Use a separate --output-root and --log-dir for preflight; "
+            "formal analysis rejects preflight records. "
             "Full defaults: tuning 10, screening 20, confirmation 100. "
             "Tuning selection, confirmation-cell selection and analysis are separate steps."
         ),
@@ -27,6 +31,10 @@ def parse_args():
     parser.add_argument("--output-root", help="Defaults to results/stage4_tree_<phase>_raw")
     parser.add_argument("--log-dir", help="Defaults to results/logs/stage4_tree/<phase>")
     parser.add_argument("--fast", action="store_true")
+    parser.add_argument(
+        "--preflight", action="store_true",
+        help="Independent five-rep full-model confirmation preflight",
+    )
     parser.add_argument("--retry-failed", action="store_true")
     parser.add_argument("--dry-run", action="store_true", help="Validate and print commands; start no processes")
     return parser.parse_args()
@@ -49,6 +57,7 @@ def main() -> int:
         fast=args.fast,
         retry_failed=args.retry_failed,
         dry_run=args.dry_run,
+        preflight=args.preflight,
     )
 
 

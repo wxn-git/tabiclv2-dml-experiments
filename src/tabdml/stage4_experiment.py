@@ -548,6 +548,29 @@ def _selected_confirmation_cells(
     )
 
 
+def validate_stage4_preflight(
+    config: Mapping[str, Any],
+    phase: str,
+    replications: int | None,
+    *,
+    fast: bool = False,
+    preflight: bool = False,
+) -> int | None:
+    """Resolve the opt-in full-model preflight count without changing config."""
+    if not preflight:
+        return replications
+    if phase != "confirmation" or fast:
+        raise ValueError("preflight requires full-model confirmation, without fast")
+    expected = config["confirmation"]["smoke_replications"]
+    if type(expected) is not int or expected != 5:
+        raise ValueError("preflight requires config confirmation.smoke_replications = 5")
+    if replications is not None and (
+        type(replications) is not int or replications != expected
+    ):
+        raise ValueError(f"preflight requires exactly {expected} replications")
+    return expected
+
+
 def iter_stage4_pairs(
     config: Mapping[str, Any],
     phase: str,
@@ -557,8 +580,12 @@ def iter_stage4_pairs(
     num_shards: int = 1,
     shard_index: int = 0,
     fast: bool = False,
+    preflight: bool = False,
 ):
     validate_shard(num_shards, shard_index)
+    replications = validate_stage4_preflight(
+        config, phase, replications, fast=fast, preflight=preflight,
+    )
     if phase not in {"screening", "confirmation"}:
         raise ValueError("phase must be 'screening' or 'confirmation'")
     profile = "fast" if fast else "full"
@@ -583,12 +610,15 @@ def iter_stage4_pairs(
         )
     )
     method_pairs = tuple((method, method) for method in methods) + _ORACLE_DIAGNOSTICS
+    # Do not mutate config: selections/frozen models bind to the original design.
+    # Stage separates DML keys; namespace separates nuisance keys and data/folds.
+    suffix = "_preflight" if preflight else ""
     for cell in cells:
         for replication in range(replications):
             for learner_l, learner_m in method_pairs:
                 pair = Stage4PairSpec(
-                    stage=str(phase_config["stage"]),
-                    seed_namespace=str(phase_config["seed_namespace"]),
+                    stage=str(phase_config["stage"]) + suffix,
+                    seed_namespace=str(phase_config["seed_namespace"]) + suffix,
                     panel=cell.panel,
                     scenario=cell.scenario,
                     n=cell.n,

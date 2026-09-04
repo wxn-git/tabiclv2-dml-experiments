@@ -501,3 +501,113 @@ def test_tuning_overflowing_metric_is_invalid_artifact_not_unhandled_error(input
     assert parallel.run_stage4_phase(phase="tuning", **inputs) == 1
     assert progress(inputs)["successful_tasks"] == 0
     assert progress(inputs)["failed_tasks"] == 1
+
+
+@pytest.mark.parametrize("replications", [None, 5])
+def test_preflight_builder_propagates_protocol_to_every_cache_worker(inputs, replications):
+    commands = parallel.build_stage4_cache_commands(
+        sys.executable, ROOT, CONFIG, inputs["tuned_models"], inputs["cache_root"],
+        phase="confirmation", selected_cells=inputs["selected_cells"],
+        replications=replications, preflight=True, retry_failed=True,
+    )
+    assert len(commands) == 9
+    assert "--num-shards" not in commands[0].argv
+    for command in commands:
+        assert "--preflight" in command.argv
+        assert "--retry-failed" in command.argv
+        assert "--fast" not in command.argv
+        assert option(command, "--replications") == "5"
+
+
+@pytest.mark.parametrize(("phase", "fast", "replications"), [
+    ("tuning", False, None), ("screening", False, None),
+    ("confirmation", True, None), ("confirmation", False, 1),
+    ("confirmation", False, 100),
+])
+def test_parent_and_builders_reject_invalid_preflight(inputs, phase, fast, replications):
+    inputs["replications"] = replications
+    with pytest.raises(ValueError, match="preflight"):
+        parallel.run_stage4_phase(phase=phase, fast=fast, preflight=True, **inputs)
+    with pytest.raises(ValueError, match="preflight"):
+        if phase == "tuning":
+            parallel.build_stage4_tuning_commands(
+                sys.executable, ROOT, CONFIG, inputs["output_root"], preflight=True,
+            )
+        else:
+            parallel.build_stage4_cache_commands(
+                sys.executable, ROOT, CONFIG, inputs["tuned_models"], inputs["cache_root"],
+                phase=phase, fast=fast, replications=replications,
+                selected_cells=inputs["selected_cells"], preflight=True,
+            )
+    assert not inputs["log_dir"].exists()
+
+
+def test_preflight_parent_child_universes_and_separate_resume(inputs, monkeypatch, tmp_path_factory):
+    from scripts import compose_stage4_dml
+    from tabdml import stage4_experiment
+
+    # Full task filenames exceed Windows MAX_PATH under pytest's long test name.
+    short = tmp_path_factory.mktemp("pf")
+    for field, name in (("output_root", "raw"), ("cache_root", "cache"), ("log_dir", "logs")):
+        inputs[field] = short / name
+    config = load_stage4_config(CONFIG)
+    frozen = frozen_for_config(config)
+    selected = selection_for_config(config)
+    universes = {
+        preflight: tuple(iter_stage4_pairs(
+            config, "confirmation", frozen, selected, replications=5, preflight=preflight,
+        )) for preflight in (False, True)
+    }
+    fitted = []
+    observed = {}
+    snapshots = []
+    real_scan = parallel._scan
+
+    def scan(stages, *args, **kwargs):
+        # Inspect the actual artifacts used by parent validation/progress.
+        observed["cache"] = {a.path.stem for a in stages[0].artifacts}
+        observed["compose"] = {a.path.stem for a in stages[1].artifacts}
+        return real_scan(stages, *args, **kwargs)
+
+    def fake_fit(task, **kwargs):
+        assert kwargs["fast"] is False
+        params = kwargs["learner_params"]
+        if params is not None:
+            assert params["n_estimators"] >= 600
+        fitted.append(task.key)
+        cache = NuisanceCache(kwargs["cache_root"])
+        cache.write(task, np.zeros(task.n), (0.0,) * task.folds_count, None, None)
+        return cache.read(task, task.n)
+
+    def run(commands, **kwargs):
+        is_preflight = "--preflight" in commands[0].argv
+        expected = universes[is_preflight]
+        assert observed["compose"] == {p.key for p in expected}
+        assert observed["cache"] == {build_stage4_nuisance_spec(p, t).key
+                                     for p in expected for t in ("l", "m")}
+        if len(commands) == 9:
+            snapshots.append(progress(inputs)["successful_tasks"])
+        codes = {}
+        for command in commands:
+            monkeypatch.setattr(sys, "argv", list(command.argv[1:]))
+            script = Path(command.argv[1]).name
+            cli = run_stage4_cache if script == "run_stage4_cache.py" else compose_stage4_dml
+            codes[command.name] = cli.main()
+        return codes
+
+    monkeypatch.setattr(parallel, "_scan", scan)
+    monkeypatch.setattr(stage4_experiment, "fit_cached_nuisance", fake_fit)
+    monkeypatch.setattr(parallel, "run_workers", run)
+    for preflight in (False, True, False, True):
+        inputs["replications"] = None if preflight else 5
+        assert parallel.run_stage4_phase(phase="confirmation", preflight=preflight, **inputs) == 0
+        state = progress(inputs)
+        assert state["preflight"] is preflight
+        assert state["replications"] == 5
+        assert state["execution_profile"] == "full"
+        assert state["successful_tasks"] == state["planned_tasks"] == 660
+        assert state["failed_tasks"] == 0
+    assert snapshots == [0, 0, 660, 660]
+    assert len(fitted) == len(set(fitted)) == 720
+    assert len(tuple(inputs["output_root"].glob("*.json"))) == 600
+    assert len(tuple(inputs["cache_root"].glob("*.npz"))) == 720

@@ -869,19 +869,21 @@ def test_stage4_compose_resolves_relative_paths_from_repository_root(
 
 
 @pytest.mark.parametrize(
-    ("phase", "fast", "replications", "expected"),
+    ("phase", "fast", "replications", "expected", "preflight"),
     [
-        ("tuning", False, None, 10),
-        ("screening", False, None, 20),
-        ("confirmation", False, None, 100),
-        ("confirmation", False, 5, 5),
-        ("tuning", True, None, 1),
-        ("screening", True, None, 1),
-        ("confirmation", True, None, 1),
+        ("tuning", False, None, 10, False),
+        ("screening", False, None, 20, False),
+        ("confirmation", False, None, 100, False),
+        ("confirmation", False, 5, 5, False),  # Formal subset, NOT preflight.
+        ("confirmation", False, None, 5, True),
+        ("confirmation", False, 5, 5, True),
+        ("tuning", True, None, 1, False),
+        ("screening", True, None, 1, False),
+        ("confirmation", True, None, 1, False),
     ],
 )
 def test_stage4_parallel_dry_run_exact_child_cli_profiles(
-    monkeypatch, tmp_path, capsys, phase, fast, replications, expected
+    monkeypatch, tmp_path, capsys, phase, fast, replications, expected, preflight
 ):
     from scripts import run_stage4_parallel
     from tabdml import stage4_parallel
@@ -914,6 +916,7 @@ def test_stage4_parallel_dry_run_exact_child_cli_profiles(
         "--output-root", str(output), "--log-dir", str(logs),
         "--cpu-workers", "8", "--retry-failed", "--dry-run",
         *(["--fast"] if fast else []),
+        *(["--preflight"] if preflight else []),
         *(["--replications", str(replications)] if replications is not None else []),
     ])
     assert run_stage4_parallel.main() == 0
@@ -931,6 +934,7 @@ def test_stage4_parallel_dry_run_exact_child_cli_profiles(
         assert args.retry_failed is True
         assert Path(args.config) == CONFIG
         if phase != "tuning":
+            assert args.preflight == preflight
             assert Path(args.tuned_models) == tuned
             if phase == "confirmation":
                 assert Path(args.selected_cells) == selected
@@ -964,3 +968,55 @@ def test_stage4_parallel_cli_propagates_worker_failure(monkeypatch, tmp_path):
     assert state["status"] == "failed"
     assert state["successful_tasks"] == 0
     assert state["failed_tasks"] == state["planned_tasks"] == 288
+
+
+@pytest.mark.parametrize("script", ["cache", "compose", "parallel"])
+@pytest.mark.parametrize("extra", [
+    ["--phase", "screening"],
+    ["--phase", "confirmation", "--fast"],
+    ["--phase", "confirmation", "--replications", "1"],
+    ["--phase", "confirmation", "--replications", "100"],
+])
+def test_preflight_clis_reject_invalid_combinations_without_artifacts(
+    monkeypatch, tmp_path, script, extra
+):
+    from scripts import run_stage4_parallel
+    from tabdml import stage4_parallel
+
+    config = load_stage4_config(CONFIG)
+    # A matching fast frozen artifact ensures rejection isn't just a profile error.
+    profile = "fast" if "--fast" in extra else "full"
+    tuned = _write_frozen(tmp_path, config, profile)
+    selected = tmp_path / "selection.json"
+    selected.write_text(json.dumps(_selection_artifact(config, profile)))
+    cache = tmp_path / "cache"
+    output = tmp_path / "raw"
+    logs = tmp_path / "logs"
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid preflight must fail before executing any task")
+    monkeypatch.setattr(stage4_parallel, "run_workers", forbidden)
+    monkeypatch.setattr(run_stage4_cache, "fit_stage4_nuisance", forbidden)
+    monkeypatch.setattr(compose_stage4_dml, "compose_stage4_record", forbidden)
+    modules = {"cache": run_stage4_cache, "compose": compose_stage4_dml,
+               "parallel": run_stage4_parallel}
+    monkeypatch.setattr(sys, "argv", [
+        f"{script}.py", "--preflight", *extra, "--config", str(CONFIG),
+        "--tuned-models", str(tuned), "--selected-cells", str(selected),
+        "--cache-root", str(cache),
+        *(["--device-group", "gpu"] if script == "cache" else ["--output-root", str(output)]),
+        *(["--log-dir", str(logs)] if script == "parallel" else []),
+    ])
+    with pytest.raises(ValueError, match="preflight"):
+        modules[script].main()
+    assert not any(path.exists() for path in (cache, output, logs))
+
+
+def test_parallel_help_documents_explicit_preflight(monkeypatch, capsys):
+    from scripts import run_stage4_parallel
+
+    monkeypatch.setattr(sys, "argv", ["run_stage4_parallel.py", "--help"])
+    with pytest.raises(SystemExit) as error:
+        run_stage4_parallel.main()
+    assert error.value.code == 0
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "--phase confirmation --preflight" in help_text

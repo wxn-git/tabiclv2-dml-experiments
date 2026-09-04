@@ -847,3 +847,128 @@ def test_resume_rejects_non_string_identity_even_if_it_compares_equal():
 
     with pytest.raises(ValueError, match="stage mismatch"):
         validate_stage4_resume_record(record, pair)
+
+
+def test_preflight_and_formal_complete_universes_are_disjoint(config):
+    from dataclasses import replace
+
+    frozen = frozen_for_config(config)
+    selection = selection_for_config(config)
+    originals = deepcopy((config, frozen, selection))
+    formal = tuple(iter_stage4_pairs(config, "confirmation", frozen, selection))
+    preflight = tuple(iter_stage4_pairs(
+        config, "confirmation", frozen, selection, preflight=True,
+    ))
+    assert len(formal) == 6000
+    assert len(preflight) == 300
+    assert not {p.key for p in formal} & {p.key for p in preflight}
+
+    def nuisances(pairs):
+        return {build_stage4_nuisance_spec(p, t).key for p in pairs for t in ("l", "m")}
+
+    assert len(nuisances(formal)) == 7200
+    assert len(nuisances(preflight)) == 360  # 600 pair-target requests share fits.
+    assert not nuisances(formal) & nuisances(preflight)
+    for field in ("data_seed", "fold_seed"):
+        formal_seeds = {failure_record(p)[field] for p in formal}
+        preflight_seeds = {failure_record(p)[field] for p in preflight}
+        assert len(formal_seeds) == 600
+        assert len(preflight_seeds) == 30
+        assert not formal_seeds & preflight_seeds
+    for p in preflight:
+        assert p.stage == config["confirmation"]["stage"] + "_preflight"
+        assert p.seed_namespace == config["confirmation"]["seed_namespace"] + "_preflight"
+    restored = {replace(p, stage=config["confirmation"]["stage"],
+                        seed_namespace=config["confirmation"]["seed_namespace"]).key
+                for p in preflight}
+    assert restored == {p.key for p in formal if p.replication < 5}
+    assert (config, frozen, selection) == originals
+
+
+def test_preflight_full_models_and_original_fingerprints(config):
+    frozen = frozen_for_config(config)
+    selection = selection_for_config(config)
+    pairs = tuple(iter_stage4_pairs(
+        config, "confirmation", frozen, selection, preflight=True,
+    ))
+    for pair in pairs:
+        assert pair.execution_profile == "full"
+        assert pair.folds_count == 5
+        for target in ("l", "m"):
+            method = resolve_method(pair, target, frozen, config["extra_trees"]["params"])
+            if method.params is not None:
+                assert method.params["n_estimators"] >= 600
+    invalid = deepcopy(selection)
+    invalid["config_fingerprint"] = "different-config"
+    with pytest.raises(ValueError, match="fingerprint"):
+        tuple(iter_stage4_pairs(config, "confirmation", frozen, invalid, preflight=True))
+
+
+@pytest.mark.parametrize(("phase", "fast", "replications"), [
+    ("screening", False, None), ("confirmation", True, None),
+    ("confirmation", False, 1), ("confirmation", False, 100),
+    ("confirmation", False, 0), ("confirmation", False, True),
+    ("confirmation", False, 5.0),
+])
+def test_preflight_rejects_invalid_protocol(config, phase, fast, replications):
+    with pytest.raises(ValueError, match="preflight"):
+        tuple(iter_stage4_pairs(
+            config, phase, frozen_for_config(config), selection_for_config(config),
+            replications=replications, fast=fast, preflight=True,
+        ))
+
+
+@pytest.mark.parametrize("count", [1, 6, True, 5.0])
+def test_preflight_requires_five_rep_config(config, count):
+    frozen = frozen_for_config(config)
+    selection = selection_for_config(config)
+    config["confirmation"]["smoke_replications"] = count
+    with pytest.raises(ValueError, match="preflight"):
+        tuple(iter_stage4_pairs(
+            config, "confirmation", frozen, selection, preflight=True,
+        ))
+
+
+def test_preflight_resume_is_separate_in_shared_cache(config, tmp_path, monkeypatch):
+    import tabdml.stage4_experiment as experiment
+
+    frozen = frozen_for_config(config)
+    selection = selection_for_config(config)
+    formal = next(iter_stage4_pairs(config, "confirmation", frozen, selection))
+    preflight = next(iter_stage4_pairs(config, "confirmation", frozen, selection, preflight=True))
+    fitted = []
+    cache = NuisanceCache(tmp_path)
+
+    def fake_fit(task, **kwargs):
+        assert kwargs["fast"] is False
+        fitted.append(task.key)
+        cache.write(task, np.zeros(task.n), (0.0,) * task.folds_count, None, None)
+        return cache.read(task, task.n)
+
+    monkeypatch.setattr(experiment, "fit_cached_nuisance", fake_fit)
+    for pair in (preflight, formal, preflight, formal):
+        fit_stage4_nuisance(pair, "l", frozen, config["extra_trees"]["params"], tmp_path)
+    assert len(fitted) == len(set(fitted)) == 2
+    for pair in (preflight, formal):
+        assert validate_stage4_resume_record(failure_record(pair), pair) == "failed"
+    with pytest.raises(ValueError, match="mismatch"):
+        validate_stage4_resume_record(failure_record(preflight), formal)
+
+
+def test_formal_analysis_rejects_preflight_stage_and_namespace(config):
+    from tabdml.stage4_analysis import _validate_record_universe
+
+    frozen = frozen_for_config(config)
+    selection = selection_for_config(config)
+    formal = tuple(iter_stage4_pairs(config, "confirmation", frozen, selection))
+    pair = next(iter_stage4_pairs(config, "confirmation", frozen, selection, preflight=True))
+    cached = CachedNuisanceResult(np.zeros(pair.n), (0.0,) * pair.folds_count, None, None)
+    record = compose_stage4_record(pair, cached, cached)
+    with pytest.raises(ValueError, match="foreign confirmation task_key"):
+        _validate_record_universe([record], formal, "confirmation")
+    for field in ("stage", "seed_namespace"):
+        forged = dict(record, task_key=formal[0].key)
+        if field == "seed_namespace":
+            forged["stage"] = formal[0].stage
+        with pytest.raises(ValueError, match=field):
+            _validate_record_universe([forged], formal, "confirmation")

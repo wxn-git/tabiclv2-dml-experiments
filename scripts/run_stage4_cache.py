@@ -40,6 +40,10 @@ def parse_args():
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--retry-failed", action="store_true")
     parser.add_argument("--fast", action="store_true")
+    parser.add_argument(
+        "--preflight", action="store_true",
+        help="Use with --phase confirmation: independent five-rep full-model preflight",
+    )
     return parser.parse_args()
 
 
@@ -85,6 +89,7 @@ def main() -> int:
         selected_confirmation=selected_confirmation,
         replications=args.replications,
         fast=args.fast,
+        preflight=args.preflight,
     )
     allowed_methods = _DEVICE_METHODS[args.device_group]
     requests = {}

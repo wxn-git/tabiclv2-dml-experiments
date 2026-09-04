@@ -23,6 +23,7 @@ from .stage4_config import load_stage4_config
 from .stage4_experiment import (
     build_stage4_nuisance_spec,
     iter_stage4_pairs,
+    validate_stage4_preflight,
     validate_stage4_cached_result,
     validate_stage4_resume_record,
 )
@@ -46,12 +47,15 @@ def _resolve(root: PathArg, value: PathArg) -> Path:
     return (path if path.is_absolute() else Path(root) / path).resolve()
 
 
-def _flags(replications: int | None, fast: bool, retry_failed: bool) -> tuple[str, ...]:
+def _flags(
+    replications: int | None, fast: bool, retry_failed: bool, preflight: bool = False,
+) -> tuple[str, ...]:
     if replications is None and fast:
         replications = 1
     return (
         *(("--replications", str(replications)) if replications is not None else ()),
         *(("--fast",) if fast else ()),
+        *(("--preflight",) if preflight else ()),
         *(("--retry-failed",) if retry_failed else ()),
     )
 
@@ -66,7 +70,10 @@ def build_stage4_tuning_commands(
     *,
     fast: bool = False,
     retry_failed: bool = False,
+    preflight: bool = False,
 ) -> tuple[WorkerCommand, ...]:
+    if preflight:
+        raise ValueError("preflight is only supported for full-model confirmation")
     _validate_workers(cpu_workers, replications)
     common = (
         str(python_executable),
@@ -98,8 +105,14 @@ def build_stage4_cache_commands(
     selected_cells: PathArg | None = None,
     fast: bool = False,
     retry_failed: bool = False,
+    preflight: bool = False,
 ) -> tuple[WorkerCommand, ...]:
     _validate_workers(cpu_workers, replications)
+    if preflight:
+        replications = validate_stage4_preflight(
+            load_stage4_config(_resolve(project_root, config_path)), phase,
+            replications, fast=fast, preflight=True,
+        )
     if phase not in {"screening", "confirmation"}:
         raise ValueError("cache phase must be screening or confirmation")
     if phase == "confirmation" and not selected_cells:
@@ -113,7 +126,7 @@ def build_stage4_cache_commands(
         "--cache-root", str(_resolve(project_root, cache_root)),
         *(("--selected-cells", str(_resolve(project_root, selected_cells)))
           if phase == "confirmation" else ()),
-        *_flags(replications, fast, retry_failed),
+        *_flags(replications, fast, retry_failed, preflight),
     )
     # The child CLI restricts methods by device and deduplicates nuisance keys
     # BEFORE applying tabdml.sharding.belongs_to_shard. Never shard pair keys.
@@ -269,11 +282,12 @@ def run_stage4_phase(
     fast: bool = False,
     retry_failed: bool = False,
     dry_run: bool = False,
+    preflight: bool = False,
 ) -> int:
     """Validate before launching; run cache then composition, or tuning alone.
 
     Fast defaults to ONE implementation-smoke replication. Five-rep full-model
-    preflight is ``phase='confirmation', replications=5, fast=False``; the
+    preflight requires ``phase='confirmation', preflight=True``; the
     default full confirmation uses the configured 100 replications.
     """
     if phase not in {"tuning", "screening", "confirmation"}:
@@ -282,6 +296,9 @@ def run_stage4_phase(
     root = Path(project_root).resolve()
     config_path = _resolve(root, config_path)
     config = load_stage4_config(config_path)
+    replications = validate_stage4_preflight(
+        config, phase, replications, fast=fast, preflight=preflight,
+    )
     replications = replications if replications is not None else (
         1 if fast else int(config[phase]["replications"])
     )
@@ -298,7 +315,7 @@ def run_stage4_phase(
     directories = [output, logs]
     common = dict(
         cpu_workers=cpu_workers, replications=replications,
-        fast=fast, retry_failed=retry_failed,
+        fast=fast, retry_failed=retry_failed, preflight=preflight,
     )
     if phase == "tuning":
         tasks = {task.key: task for task in iter_tuning_tasks(config, replications, fast=fast)}
@@ -322,6 +339,7 @@ def run_stage4_phase(
         pairs = tuple(iter_stage4_pairs(
             config, phase, frozen, selected_confirmation=selection,
             replications=replications, fast=fast,
+            preflight=preflight,
         ))
         cache = _resolve(root, cache_root)
         directories.append(cache)
@@ -348,7 +366,7 @@ def run_stage4_phase(
             "--tuned-models", str(tuned_path), "--cache-root", str(cache),
             "--output-root", str(output),
             *(("--selected-cells", str(selected_path)) if selected_path else ()),
-            *_flags(replications, fast, retry_failed),
+            *_flags(replications, fast, retry_failed, preflight),
         ))
         stages = (
             _Stage("cache", commands, tuple(requests.values())),
@@ -389,6 +407,7 @@ def run_stage4_phase(
         payload = {
             "phase": phase, "child_stage": child_stage, "status": status,
             "execution_profile": "fast" if fast else "full", "replications": replications,
+            "preflight": preflight,
             "started_at": started_at, "updated_at": datetime.now(timezone.utc).isoformat(),
             "stages": counts, "worker_exit_codes": dict(exits), "error": error,
             **{field: sum(count[field] for count in counts.values()) for field in (
