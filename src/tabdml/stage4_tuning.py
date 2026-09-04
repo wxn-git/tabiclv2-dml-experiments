@@ -26,6 +26,18 @@ from .storage import ResultStore
 _EXECUTION_PROFILES = frozenset({"full", "fast"})
 
 
+def _exact_finite_theta0(value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("theta0 must be an exact finite number")
+    try:
+        theta0 = float(value)
+    except OverflowError as error:
+        raise ValueError("theta0 must be an exact finite number") from error
+    if not np.isfinite(theta0):
+        raise ValueError("theta0 must be an exact finite number")
+    return theta0
+
+
 @dataclass(frozen=True)
 class Stage4TuningTask:
     stage: str
@@ -39,9 +51,11 @@ class Stage4TuningTask:
     candidate: str
     params: dict[str, Any]
     validation_fraction: float
+    theta0: float
     execution_profile: str = "full"
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "theta0", _exact_finite_theta0(self.theta0))
         if self.target not in {"l", "m"}:
             raise ValueError("target must be 'l' or 'm'")
         if not 0 < self.validation_fraction < 1:
@@ -71,6 +85,7 @@ class Stage4TuningTask:
         return (
             f"{self.stage}__{self.panel}__{self.scenario}__n{self.n}__p{self.p}"
             f"__r{self.replication:03d}__target-{self.target}__{self.candidate}"
+            f"__theta0-{self.theta0.hex()}"
             f"__profile-{self.execution_profile}__h{self.config_hash}"
         )
 
@@ -109,6 +124,7 @@ def iter_tuning_tasks(
     validate_shard(num_shards, shard_index)
     if replications < 1:
         raise ValueError("replications must be at least 1")
+    theta0 = _exact_finite_theta0(config["theta0"])
     tuning = config["tuning"]
     raw_targets = tuning["targets"]
     if isinstance(raw_targets, (str, bytes)) or not isinstance(
@@ -134,6 +150,7 @@ def iter_tuning_tasks(
                         candidate=str(candidate["name"]),
                         params=dict(candidate["params"]),
                         validation_fraction=float(tuning["validation_fraction"]),
+                        theta0=theta0,
                         execution_profile="fast" if fast else "full",
                     )
                     if belongs_to_shard(task.key, num_shards, shard_index):
@@ -142,7 +159,6 @@ def iter_tuning_tasks(
 
 def run_tuning_task(
     task: Stage4TuningTask,
-    theta0: float = 1.0,
     output_root: str | Path = "results/stage4_tree_tuning_raw",
     retry_failed: bool = False,
     fast: bool | None = None,
@@ -176,6 +192,7 @@ def run_tuning_task(
         "replication": task.replication,
         "target": task.target,
         "candidate": task.candidate,
+        "theta0": task.theta0,
         "learner_kind": "xgboost",
         "execution_profile": task.execution_profile,
         "nominal_params": task.params,
@@ -189,7 +206,7 @@ def run_tuning_task(
 
     try:
         data = simulate_plr(
-            task.scenario, task.n, task.p, seeds["data_seed"], theta0
+            task.scenario, task.n, task.p, seeds["data_seed"], task.theta0
         )
         train, validation = train_test_split(
             np.arange(task.n),
@@ -236,6 +253,14 @@ def run_tuning_task(
 def _validate_record_metadata(
     record: Mapping[str, Any], task: Stage4TuningTask
 ) -> None:
+    try:
+        record_theta0 = _exact_finite_theta0(record.get("theta0"))
+    except ValueError as error:
+        raise ValueError(
+            f"Invalid tuning record {task.key}: theta0 mismatch"
+        ) from error
+    if record_theta0 != task.theta0:
+        raise ValueError(f"Invalid tuning record {task.key}: theta0 mismatch")
     expected_fields = {
         "task_key": task.key,
         "stage": task.stage,
@@ -247,6 +272,7 @@ def _validate_record_metadata(
         "replication": task.replication,
         "target": task.target,
         "candidate": task.candidate,
+        "theta0": task.theta0,
         "learner_kind": "xgboost",
         "execution_profile": task.execution_profile,
         "validation_fraction": task.validation_fraction,
@@ -305,6 +331,7 @@ def _validate_other_profile_record(
         candidate=template.candidate,
         params=template.params,
         validation_fraction=template.validation_fraction,
+        theta0=template.theta0,
         execution_profile=execution_profile,
     )
     _validate_record_metadata(record, other_task)
@@ -332,13 +359,20 @@ def _canonical_tuning_run_manifest(
     stages = {task.stage for task in tasks}
     seed_namespaces = {task.seed_namespace for task in tasks}
     validation_fractions = {task.validation_fraction for task in tasks}
+    theta0_values = {task.theta0 for task in tasks}
     if any(
         len(values) != 1
-        for values in (profiles, stages, seed_namespaces, validation_fractions)
+        for values in (
+            profiles,
+            stages,
+            seed_namespaces,
+            validation_fractions,
+            theta0_values,
+        )
     ):
         raise ValueError(
             "Expected tuning tasks must use one exact stage, seed namespace, "
-            "validation fraction, and execution profile"
+            "theta0, validation fraction, and execution profile"
         )
 
     cells = sorted(
@@ -402,6 +436,7 @@ def _canonical_tuning_run_manifest(
                 "replication": task.replication,
                 "target": task.target,
                 "candidate": task.candidate,
+                "theta0": task.theta0,
                 "nominal_params": dict(task.params),
                 "nominal_config_hash": task.nominal_config_hash,
                 "effective_params": task.effective_params,
@@ -412,9 +447,10 @@ def _canonical_tuning_run_manifest(
         )
 
     return {
-        "schema": "stage4_tuning_run_v1",
+        "schema": "stage4_tuning_run_v2",
         "stage": next(iter(stages)),
         "seed_namespace": next(iter(seed_namespaces)),
+        "theta0": next(iter(theta0_values)),
         "execution_profile": next(iter(profiles)),
         "replications": expected_replications,
         "validation_fraction": next(iter(validation_fractions)),
@@ -497,16 +533,18 @@ def select_tuned_xgboost(
     stages = {task.stage for task in expected_tasks}
     seed_namespaces = {task.seed_namespace for task in expected_tasks}
     validation_fractions = {task.validation_fraction for task in expected_tasks}
+    theta0_values = {task.theta0 for task in expected_tasks}
     expected_attributes = (
         profiles,
         stages,
         seed_namespaces,
         validation_fractions,
+        theta0_values,
     )
     if any(len(values) != 1 for values in expected_attributes):
         raise ValueError(
             "Expected tuning tasks must use one exact stage, seed namespace, "
-            "validation fraction, and execution profile"
+            "theta0, validation fraction, and execution profile"
         )
     expected_profile = next(iter(profiles))
 
@@ -639,6 +677,7 @@ def select_tuned_xgboost(
         "tuning_stage": tuning_run_manifest["stage"],
         "tuning_seed_namespace": tuning_run_manifest["seed_namespace"],
         "tuning_run_fingerprint": tuning_run_identity,
+        "theta0": tuning_run_manifest["theta0"],
         "execution_profile": expected_profile,
         "selection_metric_l": "mean_validation_y_mse",
         "selection_metric_m": "mean_validation_d_mse",

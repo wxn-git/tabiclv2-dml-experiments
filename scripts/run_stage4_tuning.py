@@ -50,7 +50,6 @@ def main() -> int:
             continue
         record = run_tuning_task(
             task,
-            theta0=float(config["theta0"]),
             output_root=args.output_root,
             retry_failed=args.retry_failed,
             fast=args.fast,

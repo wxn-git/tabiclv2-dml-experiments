@@ -44,6 +44,7 @@ def _selection_task(
     replication=0,
     execution_profile="full",
     cell=CELL,
+    theta0=1.0,
 ):
     return Stage4TuningTask(
         stage="stage4_tree_tuning",
@@ -57,6 +58,7 @@ def _selection_task(
         candidate=candidate,
         params=_candidate_params(candidate),
         validation_fraction=0.25,
+        theta0=theta0,
         execution_profile=execution_profile,
     )
 
@@ -66,9 +68,17 @@ def _expected_tasks(
     replications=1,
     execution_profile="full",
     cells=(CELL,),
+    theta0=1.0,
 ):
     return tuple(
-        _selection_task(target, candidate, replication, execution_profile, cell)
+        _selection_task(
+            target,
+            candidate,
+            replication,
+            execution_profile,
+            cell,
+            theta0,
+        )
         for cell in cells
         for target in ("l", "m")
         for candidate in candidates
@@ -83,12 +93,14 @@ def _record(
     diagnostic,
     replication=0,
     execution_profile="full",
+    theta0=1.0,
 ):
     task = _selection_task(
         target,
         candidate,
         replication=replication,
         execution_profile=execution_profile,
+        theta0=theta0,
     )
     return {
         "task_key": task.key,
@@ -102,6 +114,7 @@ def _record(
         "replication": task.replication,
         "target": task.target,
         "candidate": task.candidate,
+        "theta0": task.theta0,
         "learner_kind": "xgboost",
         "execution_profile": task.execution_profile,
         "nominal_params": task.params,
@@ -115,7 +128,7 @@ def _record(
     }
 
 
-def _task(target, execution_profile="full"):
+def _task(target, execution_profile="full", theta0=1.0):
     return Stage4TuningTask(
         stage="stage4_tree_tuning",
         seed_namespace="stage4_tree_tuning",
@@ -128,6 +141,7 @@ def _task(target, execution_profile="full"):
         candidate="tiny",
         params={"n_estimators": 2, "max_depth": 1},
         validation_fraction=0.25,
+        theta0=theta0,
         execution_profile=execution_profile,
     )
 
@@ -220,6 +234,59 @@ def test_fast_and_full_tasks_have_distinct_effective_identity(config):
     assert full.config_hash != smoke.config_hash
 
 
+@pytest.mark.parametrize("execution_profile", ["full", "fast"])
+def test_theta0_binds_task_keys_and_run_fingerprint(config, execution_profile):
+    changed = deepcopy(config)
+    changed["theta0"] = 1.25
+    fast = execution_profile == "fast"
+
+    baseline_tasks = tuple(iter_tuning_tasks(config, replications=1, fast=fast))
+    changed_tasks = tuple(iter_tuning_tasks(changed, replications=1, fast=fast))
+
+    assert {task.theta0 for task in baseline_tasks} == {1.0}
+    assert {task.theta0 for task in changed_tasks} == {1.25}
+    assert {task.key for task in baseline_tasks}.isdisjoint(
+        task.key for task in changed_tasks
+    )
+    assert tuning_run_fingerprint(
+        config,
+        replications=1,
+        execution_profile=execution_profile,
+    ) != tuning_run_fingerprint(
+        changed,
+        replications=1,
+        execution_profile=execution_profile,
+    )
+
+
+@pytest.mark.parametrize(
+    "invalid_theta0",
+    [True, False, "1.0", None, 1 + 0j, float("nan"), float("inf"), float("-inf")],
+)
+def test_tuning_rejects_non_exact_or_non_finite_theta0(config, invalid_theta0):
+    changed = deepcopy(config)
+    changed["theta0"] = invalid_theta0
+
+    with pytest.raises(ValueError, match="theta0 must be an exact finite number"):
+        tuple(iter_tuning_tasks(changed, replications=1))
+
+
+@pytest.mark.parametrize(
+    "invalid_theta0",
+    [True, False, "1.0", None, 1 + 0j, float("nan"), float("inf"), float("-inf")],
+)
+def test_tuning_task_rejects_non_exact_or_non_finite_theta0(invalid_theta0):
+    with pytest.raises(ValueError, match="theta0 must be an exact finite number"):
+        _task("l", theta0=invalid_theta0)
+
+
+def test_tuning_task_normalizes_an_exact_finite_integer_theta0():
+    task = _task("l", theta0=2)
+
+    assert task.theta0 == 2.0
+    assert type(task.theta0) is float
+
+
 def test_tuning_fingerprint_is_canonical_and_binds_run_provenance(config):
     full_tasks = tuple(iter_tuning_tasks(config, replications=1))
     reversed_tasks = tuple(reversed(full_tasks))
@@ -279,6 +346,39 @@ def test_fast_smoke_record_cannot_resume_or_skip_the_full_task(
     assert full_record["execution_profile"] == "full"
     assert full_record["params"]["n_estimators"] == 800
     assert full_record["config_hash"] == full.config_hash
+
+
+def test_changed_theta0_cannot_resume_and_runner_uses_each_task_value(
+    monkeypatch, tmp_path, config
+):
+    changed = deepcopy(config)
+    changed["theta0"] = 1.25
+    baseline = next(iter_tuning_tasks(config, replications=1, fast=True))
+    updated = next(iter_tuning_tasks(changed, replications=1, fast=True))
+    simulated_theta0 = []
+    fitted_targets = []
+
+    def simulate(scenario, n, p, seed, theta0):
+        del scenario, seed
+        simulated_theta0.append(theta0)
+        return _data(n, p)
+
+    monkeypatch.setattr("tabdml.stage4_tuning.simulate_plr", simulate)
+    monkeypatch.setattr(
+        "tabdml.stage4_tuning.make_configured_tree_learner",
+        lambda *args, **kwargs: _RecordingModel(fitted_targets),
+    )
+
+    baseline_record = run_tuning_task(baseline, output_root=tmp_path)
+    updated_record = run_tuning_task(updated, output_root=tmp_path)
+    resumed = run_tuning_task(updated, output_root=tmp_path)
+
+    assert baseline_record["theta0"] == 1.0
+    assert updated_record["theta0"] == 1.25
+    assert simulated_theta0 == [1.0, 1.25]
+    assert len(fitted_targets) == 2
+    assert len(tuple(tmp_path.glob("*.json"))) == 2
+    assert resumed == {"task_key": updated.key, "status": "skipped"}
 
 
 @pytest.mark.parametrize(
@@ -421,6 +521,81 @@ def test_selection_rejects_missing_or_forged_seed_provenance(field, mutation):
         )
 
 
+@pytest.mark.parametrize(
+    "invalid_theta0",
+    [True, "1.0", None, 1.25, float("nan"), float("inf"), float("-inf")],
+)
+def test_selection_rejects_theta0_type_and_finiteness_impostors(invalid_theta0):
+    records = [
+        _record(target, "a", observed=1.0, diagnostic=2.0)
+        for target in ("l", "m")
+    ]
+    records[0]["theta0"] = invalid_theta0
+
+    with pytest.raises(ValueError, match="theta0 mismatch"):
+        select_tuned_xgboost(
+            records,
+            expected_replications=1,
+            expected_tasks=_expected_tasks(candidates=("a",)),
+        )
+
+
+def test_selection_rejects_stale_theta0_even_under_current_task_keys():
+    records = [
+        _record(target, "a", observed=1.0, diagnostic=2.0, theta0=1.25)
+        for target in ("l", "m")
+    ]
+    for record in records:
+        record["theta0"] = 1.0
+
+    with pytest.raises(ValueError, match="theta0 mismatch"):
+        select_tuned_xgboost(
+            records,
+            expected_replications=1,
+            expected_tasks=_expected_tasks(candidates=("a",), theta0=1.25),
+        )
+
+
+def test_selection_rejects_records_from_a_different_theta0_task_universe():
+    stale_records = [
+        _record(target, "a", observed=1.0, diagnostic=2.0, theta0=1.0)
+        for target in ("l", "m")
+    ]
+
+    with pytest.raises(ValueError, match="unexpected task_key"):
+        select_tuned_xgboost(
+            stale_records,
+            expected_replications=1,
+            expected_tasks=_expected_tasks(candidates=("a",), theta0=1.25),
+        )
+
+
+def test_selection_rejects_stale_theta0_from_the_other_profile():
+    full_records = [
+        _record(target, "a", observed=1.0, diagnostic=2.0, theta0=1.25)
+        for target in ("l", "m")
+    ]
+    fast_records = [
+        _record(
+            target,
+            "a",
+            observed=1.0,
+            diagnostic=2.0,
+            execution_profile="fast",
+            theta0=1.25,
+        )
+        for target in ("l", "m")
+    ]
+    fast_records[0]["theta0"] = 1.0
+
+    with pytest.raises(ValueError, match="theta0 mismatch"):
+        select_tuned_xgboost(
+            full_records + fast_records,
+            expected_replications=1,
+            expected_tasks=_expected_tasks(candidates=("a",), theta0=1.25),
+        )
+
+
 def test_selection_rejects_failed_record_from_the_expected_profile():
     records = [
         _record(target, "a", observed=1.0, diagnostic=2.0)
@@ -523,6 +698,32 @@ def test_successful_result_resume_rejects_forged_seed_provenance(
     assert len(fitted_targets) == 1
 
 
+@pytest.mark.parametrize(
+    "invalid_theta0",
+    [True, "1.0", None, 1.25, float("nan"), float("inf"), float("-inf")],
+)
+def test_successful_result_resume_rejects_invalid_theta0_provenance(
+    monkeypatch, tmp_path, invalid_theta0
+):
+    task = _task("l")
+    fitted_targets = []
+    monkeypatch.setattr(
+        "tabdml.stage4_tuning.simulate_plr", lambda *args, **kwargs: _data()
+    )
+    monkeypatch.setattr(
+        "tabdml.stage4_tuning.make_configured_tree_learner",
+        lambda *args, **kwargs: _RecordingModel(fitted_targets),
+    )
+    successful = run_tuning_task(task, output_root=tmp_path)
+    successful["theta0"] = invalid_theta0
+    ResultStore(tmp_path).write(successful)
+
+    with pytest.raises(ValueError, match="theta0 mismatch"):
+        run_tuning_task(task, output_root=tmp_path, retry_failed=True)
+
+    assert len(fitted_targets) == 1
+
+
 def test_write_tuned_xgboost_atomically_freezes_complete_groups(tmp_path):
     records = [
         _record(target, candidate, observed=1.0, diagnostic=2.0)
@@ -541,6 +742,7 @@ def test_write_tuned_xgboost_atomically_freezes_complete_groups(tmp_path):
     assert json.loads(output.read_text(encoding="utf-8")) == selected
     assert selected["tuning_stage"] == "stage4_tree_tuning"
     assert selected["tuning_seed_namespace"] == "stage4_tree_tuning"
+    assert selected["theta0"] == 1.0
     assert selected["tuning_run_fingerprint"] == (
         tuning_task_universe_fingerprint(_expected_tasks(), 1)
     )

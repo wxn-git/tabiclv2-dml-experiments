@@ -251,6 +251,7 @@ def test_stage4_tuning_cli_fast_run_uses_valid_config_and_narrowed_tasks(
     ]
     assert len(records) == 2
     assert all(record["status"] == "success" for record in records)
+    assert all(record["theta0"] == first.theta0 for record in records)
     assert all("validation_observed_mse" in record for record in records)
     assert all("validation_truth_mse_diagnostic" in record for record in records)
     selected = json.loads(selected_output.read_text(encoding="utf-8"))
@@ -259,6 +260,7 @@ def test_stage4_tuning_cli_fast_run_uses_valid_config_and_narrowed_tasks(
     assert selected["execution_profile"] == "fast"
     assert selected["tuning_stage"] == first.stage
     assert selected["tuning_seed_namespace"] == first.seed_namespace
+    assert selected["theta0"] == first.theta0
     assert selected["tuning_run_fingerprint"] == (
         tuning_task_universe_fingerprint(tasks, 1)
     )
@@ -308,6 +310,7 @@ def test_stage4_tuning_cli_refuses_selection_when_an_expected_cell_is_missing(
                 "replication": task.replication,
                 "target": task.target,
                 "candidate": task.candidate,
+                "theta0": task.theta0,
                 "learner_kind": "xgboost",
                 "execution_profile": task.execution_profile,
                 "nominal_params": task.params,
