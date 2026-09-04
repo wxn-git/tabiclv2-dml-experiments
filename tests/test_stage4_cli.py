@@ -866,3 +866,101 @@ def test_stage4_compose_resolves_relative_paths_from_repository_root(
     assert compose_stage4_dml.main() == 0
     assert (project_root / "results" / "output" / f"{pair.key}.json").exists()
     assert not (elsewhere / "results").exists()
+
+
+@pytest.mark.parametrize(
+    ("phase", "fast", "replications", "expected"),
+    [
+        ("tuning", False, None, 10),
+        ("screening", False, None, 20),
+        ("confirmation", False, None, 100),
+        ("confirmation", False, 5, 5),
+        ("tuning", True, None, 1),
+        ("screening", True, None, 1),
+        ("confirmation", True, None, 1),
+    ],
+)
+def test_stage4_parallel_dry_run_exact_child_cli_profiles(
+    monkeypatch, tmp_path, capsys, phase, fast, replications, expected
+):
+    from scripts import run_stage4_parallel
+    from tabdml import stage4_parallel
+
+    config = load_stage4_config(CONFIG)
+    profile = "fast" if fast else "full"
+    tuned = _write_frozen(tmp_path, config, profile)
+    selected = tmp_path / "selection.json"
+    selected.write_text(json.dumps(_selection_artifact(config, profile)), encoding="utf-8")
+    cache = tmp_path / "cache"
+    output = tmp_path / "raw"
+    logs = tmp_path / "logs"
+    commands = []
+    real_format = stage4_parallel.subprocess.list2cmdline
+
+    def inspect(argv):
+        commands.append(argv)
+        return real_format(argv)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Dry run must not start any process")
+
+    monkeypatch.setattr(stage4_parallel.subprocess, "list2cmdline", inspect)
+    monkeypatch.setattr(stage4_parallel, "run_workers", forbidden)
+    monkeypatch.setattr(stage4_parallel.subprocess, "Popen", forbidden)
+    monkeypatch.setattr(sys, "argv", [
+        "run_stage4_parallel.py", "--phase", phase,
+        "--config", str(CONFIG), "--tuned-models", str(tuned),
+        "--selected-cells", str(selected), "--cache-root", str(cache),
+        "--output-root", str(output), "--log-dir", str(logs),
+        "--cpu-workers", "8", "--retry-failed", "--dry-run",
+        *(["--fast"] if fast else []),
+        *(["--replications", str(replications)] if replications is not None else []),
+    ])
+    assert run_stage4_parallel.main() == 0
+    assert len(commands) == (8 if phase == "tuning" else 10)
+    parsers = {
+        "run_stage4_tuning.py": run_stage4_tuning,
+        "run_stage4_cache.py": run_stage4_cache,
+        "compose_stage4_dml.py": compose_stage4_dml,
+    }
+    for argv in commands:
+        monkeypatch.setattr(sys, "argv", list(argv[1:]))
+        args = parsers[Path(argv[1]).name].parse_args()
+        assert args.replications == expected
+        assert args.fast == fast
+        assert args.retry_failed is True
+        assert Path(args.config) == CONFIG
+        if phase != "tuning":
+            assert Path(args.tuned_models) == tuned
+            if phase == "confirmation":
+                assert Path(args.selected_cells) == selected
+    assert "--replications" in capsys.readouterr().out
+    assert not any(path.exists() for path in (cache, output, logs))
+
+
+def test_stage4_parallel_requires_phase(monkeypatch):
+    from scripts import run_stage4_parallel
+
+    monkeypatch.setattr(sys, "argv", ["run_stage4_parallel.py", "--dry-run"])
+    with pytest.raises(SystemExit) as error:
+        run_stage4_parallel.main()
+    assert error.value.code == 2
+
+
+def test_stage4_parallel_cli_propagates_worker_failure(monkeypatch, tmp_path):
+    from scripts import run_stage4_parallel
+    from tabdml import stage4_parallel
+
+    monkeypatch.setattr(stage4_parallel, "run_workers", lambda commands, **kw: {
+        command.name: 7 for command in commands
+    })
+    logs = tmp_path / "logs"
+    monkeypatch.setattr(sys, "argv", [
+        "run_stage4_parallel.py", "--phase", "tuning", "--fast",
+        "--output-root", str(tmp_path / "raw"), "--log-dir", str(logs),
+    ])
+    assert run_stage4_parallel.main() == 7
+    state = json.loads((logs / "progress.json").read_text(encoding="utf-8"))
+    assert state["status"] == "failed"
+    assert state["successful_tasks"] == 0
+    assert state["failed_tasks"] == state["planned_tasks"] == 288
