@@ -166,6 +166,14 @@ def validate_frozen_tuning(
         value = frozen_tuning.get(field)
         if not isinstance(value, str) or value != expected_value:
             raise ValueError(f"Frozen tuning {field} mismatch")
+    theta0 = frozen_tuning.get("theta0")
+    if (
+        isinstance(theta0, bool)
+        or not isinstance(theta0, (int, float))
+        or not np.isfinite(theta0)
+        or theta0 != config["theta0"]
+    ):
+        raise ValueError("Frozen tuning theta0 mismatch")
 
     expected_cells = {cell.key for cell in iter_tree_cells(config)}
     cells = frozen_tuning.get("cells")

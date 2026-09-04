@@ -76,6 +76,7 @@ def _frozen_tuning(config, execution_profile="full"):
             expected_replications,
             execution_profile,
         ),
+        "theta0": config["theta0"],
         "execution_profile": execution_profile,
         "selection_metric_l": "mean_validation_y_mse",
         "selection_metric_m": "mean_validation_d_mse",

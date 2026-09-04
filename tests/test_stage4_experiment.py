@@ -121,6 +121,7 @@ def frozen_for_config(config, execution_profile="full"):
             expected_replications,
             execution_profile,
         ),
+        "theta0": config["theta0"],
         "execution_profile": execution_profile,
         "selection_metric_l": "mean_validation_y_mse",
         "selection_metric_m": "mean_validation_d_mse",
@@ -295,6 +296,33 @@ def test_frozen_tuning_validation_accepts_exact_task4_run_provenance(
     )
 
     assert validated is selected
+
+
+def test_frozen_tuning_accepts_exact_theta0_metadata(config):
+    selected = frozen_for_config(config)
+
+    assert selected["theta0"] == config["theta0"]
+    assert validate_frozen_tuning(config, selected, "full") is selected
+
+
+def test_frozen_tuning_rejects_missing_theta0_metadata(config):
+    selected = frozen_for_config(config)
+    selected.pop("theta0")
+
+    with pytest.raises(ValueError, match="theta0"):
+        validate_frozen_tuning(config, selected, "full")
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [True, "1.0", 2.0, np.nan, np.inf, -np.inf],
+)
+def test_frozen_tuning_rejects_invalid_theta0_metadata(config, invalid):
+    selected = frozen_for_config(config)
+    selected["theta0"] = invalid
+
+    with pytest.raises(ValueError, match="theta0"):
+        validate_frozen_tuning(config, selected, "full")
 
 
 @pytest.mark.parametrize("field", ["stage", "seed_namespace"])
