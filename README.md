@@ -93,3 +93,17 @@ results/published/  精简后的汇总表、报告、图表和环境记录
 ## 当前范围
 
 该仓库记录合成 PLR-DML 实验，不包含真实数据实证分析，也不声称 TabICLv2 是传统 nuisance learner 的通用替代品。当前证据支持“优势依赖 DGP 结构”这一更有限、也更可复核的结论。
+
+## Stage 4：轴对齐树状 DGP 基准
+
+新增流程覆盖两个面板、三个树结构，共 24 个预声明配置；分别冻结每个配置的 `l`/`m` XGBoost，共 48 个选择项，再按六个 `panel × structure` 组冻结确认配置（包括 TabICLv2 落败的组）。这一流程不修改 Stage 1–3B，也不代表已经取得新的正式实验结论。
+
+三种运行模式必须分开：
+
+- 实现 smoke：各阶段 `--replications 1 --fast`，只检查流程；选择器和分析也必须带 `--fast`、正确的 `--tuned-models`。
+- 独立预检：正式 10 次 tuning 和 20 次 screening 冻结后，确认阶段使用 `--preflight`，运行完整模型的 5 次独立抽样；`--replications 5` 本身不是预检。
+- 正式实验：10 次 tuning、20 次 screening、100 次 confirmation，不使用 `--fast` 或 `--preflight`；昂贵运行需单独批准。
+
+Windows 使用短根目录，例如 `results/s4s0905/{tr,sr,cr,cache,an}`，避免长任务键触发 MAX_PATH。完整、可断点续跑的 PowerShell 命令及正式发布门禁见 [复现说明第 13 节](REPRODUCIBILITY.md#13-stage-4轴对齐树状基准)。最多一个 GPU worker 和八个 CPU workers。
+
+分析在同一个 `--output-dir` 写出六 CSV（含 24-cell ranking）、中文报告及三张图。发布器仅接受完整 full-profile 原始记录，并重算冻结选择和全部分析文件，校验后以临时同级目录发布 SHA-256 manifest。smoke、预检、不完整或陈旧的结果不能通过发布门禁。现阶段不将测试夹具或 smoke 结果当作正式证据；生成结果是否保留入 Git 由父任务另行决定。

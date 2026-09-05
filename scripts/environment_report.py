@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import importlib.metadata
 import json
 import platform
@@ -34,7 +35,9 @@ def collect_environment() -> dict:
 
 
 def main():
-    output = Path("results/environment.json")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", default="results/environment.json")
+    output = Path(parser.parse_args().output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(collect_environment(), ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Wrote {output}.")
@@ -42,4 +45,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
