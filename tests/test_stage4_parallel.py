@@ -90,7 +90,7 @@ def test_cache_uses_one_unsharded_gpu_and_eight_cpu_workers(inputs, phase):
         assert option(command, "--device-group") == "cpu"
         assert option(command, "--num-shards") == "8"
         assert option(command, "--shard-index") == str(index)
-        assert "tabiclv2" not in " ".join(command.argv)
+        assert "--learners" not in command.argv
     for command in commands:
         assert option(command, "--replications") == "5"
         assert "--fast" not in command.argv
@@ -401,10 +401,13 @@ def test_readonly_worker_log_is_rejected_before_launch(inputs, monkeypatch):
 
 def test_relative_executable_resolves_against_project_not_cwd(inputs, monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
-    inputs["python_executable"] = ".venv/Scripts/python.exe"
+    relative_python = Path("runtime") / "bin" / "python"
+    resolved_python = str((ROOT / relative_python).resolve())
+    monkeypatch.setattr(parallel.shutil, "which", lambda candidate: candidate)
+    inputs["python_executable"] = relative_python
     inputs["config_path"] = "configs/stage4_tree_benchmark.yaml"
     assert parallel.run_stage4_phase(phase="tuning", dry_run=True, **inputs) == 0
-    assert str(ROOT / ".venv/Scripts/python.exe") in capsys.readouterr().out
+    assert resolved_python in capsys.readouterr().out
     assert not inputs["log_dir"].exists()
 
 
