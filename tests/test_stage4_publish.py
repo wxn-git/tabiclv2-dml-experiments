@@ -261,6 +261,12 @@ def test_invalid_environment_rejected(formal, edit, malformation):
         validate_stage4_publication(formal)
 
 
+def test_cpu_only_environment_without_gpu_telemetry_is_publishable(formal, edit):
+    change_json(edit, formal / "stage4_tree_confirmation/environment.json", gpu=None)
+    manifest = validate_stage4_publication(formal)
+    assert manifest["execution_profile"] == "full"
+
+
 def test_rejects_forged_replace_manifest_even_when_directory_empty(tmp_path):
     destination = tmp_path / "pub"
     write_json(destination / "manifest.json", {"schema": "stage4_publication_v1",

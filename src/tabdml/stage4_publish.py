@@ -145,7 +145,8 @@ def validate_stage4_publication(results_root, expected_replications=100, **paths
                 or set(packages) != ENVIRONMENT_PACKAGES
                 or any(not isinstance(value, str) or not value for value in packages.values())
                 or environment.get("cuda") != packages["torch"]
-                or not isinstance(environment.get("gpu"), str) or not environment["gpu"]):
+                or (environment.get("gpu") is not None
+                    and (not isinstance(environment["gpu"], str) or not environment["gpu"]))):
             raise ValueError("invalid environment report")
         tuning = _json(files["selected_xgboost.json"])
         selection = _json(files["selected_confirmation_cells.json"])
