@@ -112,13 +112,20 @@ def make_learner(
 
     if name in {"tabiclv2", "tabiclv2_1", "tabiclv2_8"}:
         try:
+            import torch
             from tabicl import TabICLRegressor
         except ImportError as exc:
             raise ImportError(
                 "TabICLv2 requires the optional 'tabicl' and 'torch' dependencies."
             ) from exc
+        if not torch.cuda.is_available():
+            raise RuntimeError("TabICLv2 experiment workers require CUDA.")
         estimators = 1 if name == "tabiclv2_1" else 8 if name == "tabiclv2_8" else tabicl_estimators
-        return TabICLRegressor(n_estimators=estimators)
+        return TabICLRegressor(
+            n_estimators=estimators,
+            random_state=seed,
+            device="cuda",
+        )
 
     if name == "ensemble":
         from .ensemble import ConvexOOFEnsemble

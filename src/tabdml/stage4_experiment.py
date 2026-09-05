@@ -17,7 +17,11 @@ from .stage3b import (
     fit_cached_nuisance,
 )
 from .stage3b_screen import _params_hash
-from .stage4_config import TreeBenchmarkCell, iter_tree_cells
+from .stage4_config import (
+    TreeBenchmarkCell,
+    iter_tree_cells,
+    resolve_stage4_replications,
+)
 from .stage4_tuning import tuning_run_fingerprint
 
 
@@ -559,16 +563,9 @@ def validate_stage4_preflight(
     """Resolve the opt-in full-model preflight count without changing config."""
     if not preflight:
         return replications
-    if phase != "confirmation" or fast:
-        raise ValueError("preflight requires full-model confirmation, without fast")
-    expected = config["confirmation"]["smoke_replications"]
-    if type(expected) is not int or expected != 5:
-        raise ValueError("preflight requires config confirmation.smoke_replications = 5")
-    if replications is not None and (
-        type(replications) is not int or replications != expected
-    ):
-        raise ValueError(f"preflight requires exactly {expected} replications")
-    return expected
+    return resolve_stage4_replications(
+        config, phase, replications, fast=fast, preflight=True
+    )
 
 
 def iter_stage4_pairs(
@@ -583,7 +580,7 @@ def iter_stage4_pairs(
     preflight: bool = False,
 ):
     validate_shard(num_shards, shard_index)
-    replications = validate_stage4_preflight(
+    replications = resolve_stage4_replications(
         config, phase, replications, fast=fast, preflight=preflight,
     )
     if phase not in {"screening", "confirmation"}:
@@ -594,14 +591,6 @@ def iter_stage4_pairs(
     methods = tuple(phase_config["methods"])
     if methods != _STAGE4_METHODS:
         raise ValueError("Stage 4 methods do not match the exact prescribed order")
-    if replications is None:
-        replications = int(
-            phase_config["smoke_replications"]
-            if phase == "confirmation" and fast
-            else phase_config["replications"]
-        )
-    if isinstance(replications, bool) or replications < 1:
-        raise ValueError("replications must be at least 1")
     cells = (
         iter_tree_cells(config)
         if phase == "screening"

@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 from tabdml.sharding import belongs_to_shard, validate_shard
-from tabdml.stage4_config import load_stage4_config
+from tabdml.stage4_config import load_stage4_config, resolve_stage4_replications
 from tabdml.stage4_tuning import (
     iter_tuning_tasks,
     run_tuning_task,
@@ -38,10 +38,8 @@ def main() -> int:
     if not config_path.is_absolute():
         config_path = project_root / config_path
     config = load_stage4_config(config_path)
-    replications = (
-        int(config["tuning"]["replications"])
-        if args.replications is None
-        else args.replications
+    replications = resolve_stage4_replications(
+        config, "tuning", args.replications, fast=args.fast
     )
     all_tasks = tuple(iter_tuning_tasks(config, replications, fast=args.fast))
 

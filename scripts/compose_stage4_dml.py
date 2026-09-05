@@ -7,7 +7,7 @@ from pathlib import Path
 
 from tabdml.nuisance_cache import NuisanceCache
 from tabdml.sharding import validate_shard
-from tabdml.stage4_config import load_stage4_config
+from tabdml.stage4_config import load_stage4_config, resolve_stage4_replications
 from tabdml.stage4_experiment import (
     build_stage4_nuisance_spec,
     compose_stage4_record,
@@ -74,6 +74,13 @@ def main() -> int:
     project_root = Path(__file__).resolve().parents[1]
     config_path = _resolve(project_root, args.config)
     config = load_stage4_config(config_path)
+    replications = resolve_stage4_replications(
+        config,
+        args.phase,
+        args.replications,
+        fast=args.fast,
+        preflight=args.preflight,
+    )
     tuned_models_path = _resolve(project_root, args.tuned_models)
     frozen_tuning = _read_json(tuned_models_path, "frozen tuning")
     cache_root = _resolve(project_root, args.cache_root)
@@ -93,7 +100,7 @@ def main() -> int:
             args.phase,
             frozen_tuning,
             selected_confirmation=selected_confirmation,
-            replications=args.replications,
+            replications=replications,
             num_shards=args.num_shards,
             shard_index=args.shard_index,
             fast=args.fast,

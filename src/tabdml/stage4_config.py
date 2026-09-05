@@ -317,6 +317,44 @@ def load_stage4_config(path: str | Path) -> dict[str, Any]:
     return dict(config)
 
 
+def resolve_stage4_replications(
+    config: Mapping[str, Any],
+    phase: str,
+    replications: int | None = None,
+    *,
+    fast: bool = False,
+    preflight: bool = False,
+) -> int:
+    """Resolve one Stage 4 replication count under its execution protocol."""
+    if phase not in {"tuning", "screening", "confirmation"}:
+        raise ValueError("phase must be tuning, screening or confirmation")
+    if fast and preflight:
+        raise ValueError("--fast and --preflight are incompatible")
+    if preflight:
+        if phase != "confirmation":
+            raise ValueError("preflight requires full-model confirmation, without fast")
+        expected = config["confirmation"]["smoke_replications"]
+        if type(expected) is not int or expected != 5:
+            raise ValueError(
+                "preflight requires config confirmation.smoke_replications = 5"
+            )
+        if replications is not None and (
+            type(replications) is not int or replications != expected
+        ):
+            raise ValueError(f"preflight requires exactly {expected} replications")
+        return expected
+    if fast:
+        if replications is not None and (
+            type(replications) is not int or replications != 1
+        ):
+            raise ValueError("--fast requires exactly one replication")
+        return 1
+    resolved = config[phase]["replications"] if replications is None else replications
+    if type(resolved) is not int or resolved < 1:
+        raise ValueError("replications must be a positive integer")
+    return resolved
+
+
 def iter_tree_cells(config: Mapping[str, Any]) -> tuple[TreeBenchmarkCell, ...]:
     config = _require_mapping(config, "config")
     _validate_stage4_config(config)

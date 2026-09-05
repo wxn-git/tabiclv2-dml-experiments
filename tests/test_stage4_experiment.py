@@ -574,6 +574,50 @@ def test_stage4_pairs_enumerate_same_methods_and_four_oracle_diagnostics(config)
     ]
 
 
+@pytest.mark.parametrize("phase", ["screening", "confirmation"])
+def test_fast_stage4_pair_iterator_defaults_to_exactly_one_replication(
+    config, phase
+):
+    frozen = frozen_for_config(config, execution_profile="fast")
+    selected = (
+        selection_for_config(config, execution_profile="fast")
+        if phase == "confirmation"
+        else None
+    )
+
+    pairs = tuple(
+        iter_stage4_pairs(
+            config,
+            phase,
+            frozen,
+            selected_confirmation=selected,
+            fast=True,
+        )
+    )
+
+    assert {pair.replication for pair in pairs} == {0}
+
+
+@pytest.mark.parametrize("phase", ["screening", "confirmation"])
+@pytest.mark.parametrize("replications", [0, 2, 5, True, 1.0])
+def test_fast_stage4_pair_iterator_rejects_every_explicit_value_except_one(
+    config, phase, replications
+):
+    with pytest.raises(ValueError, match="fast.*exactly one"):
+        tuple(
+            iter_stage4_pairs(
+                config,
+                phase,
+                frozen_for_config(config, execution_profile="fast"),
+                selected_confirmation=selection_for_config(
+                    config, execution_profile="fast"
+                ),
+                replications=replications,
+                fast=True,
+            )
+        )
+
+
 def test_stage4_pair_shards_partition_exact_pair_keys(config):
     selected = frozen_for_config(config)
     all_pairs = tuple(

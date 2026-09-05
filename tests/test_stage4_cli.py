@@ -221,11 +221,12 @@ def test_stage4_tuning_cli_fast_run_uses_valid_config_and_narrowed_tasks(
 
     output_root = tmp_path / "raw"
     selected_output = tmp_path / "selected" / "selected_xgboost.json"
-    monkeypatch.setattr(
-        run_stage4_tuning,
-        "iter_tuning_tasks",
-        lambda config, replications, fast: iter(tasks),
-    )
+    def narrowed_tasks(config, replications, fast):
+        assert replications == 1
+        assert fast is True
+        return iter(tasks)
+
+    monkeypatch.setattr(run_stage4_tuning, "iter_tuning_tasks", narrowed_tasks)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -237,8 +238,6 @@ def test_stage4_tuning_cli_fast_run_uses_valid_config_and_narrowed_tasks(
             str(output_root),
             "--selected-output",
             str(selected_output),
-            "--replications",
-            "1",
             "--fast",
             "--select",
         ],
@@ -273,6 +272,135 @@ def test_stage4_tuning_cli_fast_run_uses_valid_config_and_narrowed_tasks(
     assert selected["selection_metric_m"] == "mean_validation_d_mse"
     assert "truth" not in selected["selection_metric_l"]
     assert "truth" not in selected["selection_metric_m"]
+
+
+@pytest.mark.parametrize("replications", [0, 2, 5])
+def test_stage4_tuning_cli_rejects_invalid_fast_count_before_artifacts(
+    monkeypatch, tmp_path, replications
+):
+    output_root = tmp_path / "raw"
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid fast tuning must fail before executing a task")
+
+    monkeypatch.setattr(run_stage4_tuning, "run_tuning_task", forbidden)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_stage4_tuning.py",
+            "--config",
+            str(CONFIG),
+            "--output-root",
+            str(output_root),
+            "--replications",
+            str(replications),
+            "--fast",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="fast.*exactly one"):
+        run_stage4_tuning.main()
+    assert not output_root.exists()
+
+
+@pytest.mark.parametrize("script", ["cache", "compose"])
+def test_stage4_child_clis_reject_multi_replication_fast_before_artifacts(
+    monkeypatch, tmp_path, script
+):
+    config = load_stage4_config(CONFIG)
+    tuned = _write_frozen(tmp_path, config, execution_profile="fast")
+    selected = tmp_path / "selection.json"
+    selected.write_text(
+        json.dumps(_selection_artifact(config, execution_profile="fast")),
+        encoding="utf-8",
+    )
+    cache = tmp_path / "cache"
+    output = tmp_path / "raw"
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid fast child must fail before executing a task")
+
+    monkeypatch.setattr(run_stage4_cache, "fit_stage4_nuisance", forbidden)
+    monkeypatch.setattr(compose_stage4_dml, "compose_stage4_record", forbidden)
+    module = run_stage4_cache if script == "cache" else compose_stage4_dml
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            f"{script}.py",
+            "--config",
+            str(CONFIG),
+            "--phase",
+            "confirmation",
+            "--tuned-models",
+            str(tuned),
+            "--selected-cells",
+            str(selected),
+            "--cache-root",
+            str(cache),
+            "--replications",
+            "2",
+            "--fast",
+            *(
+                ["--device-group", "cpu"]
+                if script == "cache"
+                else ["--output-root", str(output)]
+            ),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="fast.*exactly one"):
+        module.main()
+    assert not cache.exists()
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("script", ["cache", "compose"])
+def test_stage4_child_clis_resolve_fast_default_to_one(
+    monkeypatch, tmp_path, script
+):
+    config = load_stage4_config(CONFIG)
+    tuned = _write_frozen(tmp_path, config, execution_profile="fast")
+    selected = tmp_path / "selection.json"
+    selected.write_text(
+        json.dumps(_selection_artifact(config, execution_profile="fast")),
+        encoding="utf-8",
+    )
+    seen = []
+    module = run_stage4_cache if script == "cache" else compose_stage4_dml
+
+    def inspect_pairs(*args, **kwargs):
+        seen.append(kwargs["replications"])
+        return iter(())
+
+    monkeypatch.setattr(module, "iter_stage4_pairs", inspect_pairs)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            f"{script}.py",
+            "--config",
+            str(CONFIG),
+            "--phase",
+            "confirmation",
+            "--tuned-models",
+            str(tuned),
+            "--selected-cells",
+            str(selected),
+            "--cache-root",
+            str(tmp_path / "cache"),
+            "--fast",
+            *(
+                ["--device-group", "cpu"]
+                if script == "cache"
+                else ["--output-root", str(tmp_path / "raw")]
+            ),
+        ],
+    )
+
+    assert module.main() == 0
+    assert seen == [1]
 
 
 def test_stage4_tuning_cli_refuses_selection_when_an_expected_cell_is_missing(

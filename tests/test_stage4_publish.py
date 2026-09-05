@@ -13,6 +13,9 @@ from tabdml.stage4_tuning import derive_tuning_seeds, iter_tuning_tasks, select_
 from test_stage4_analysis import CONFIG_PATH, _phase_records
 
 
+AUDIT_MIN_N = 200_000
+
+
 def write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value), encoding="utf-8")
@@ -45,7 +48,10 @@ def formal(tmp_path_factory):
             write_json(root / f"stage4_tree_{phase}_raw/{index:05}.json", record)
     write_json(root / "stage4_tree_tuning/selected_xgboost.json", frozen)
     write_json(root / "stage4_tree_screening/selected_confirmation_cells.json", selected)
-    write_structure_audit(audit_tree_structures(n=1000), root / "stage4_tree_structure_checks")
+    write_structure_audit(
+        audit_tree_structures(n=AUDIT_MIN_N, seed=20260903),
+        root / "stage4_tree_structure_checks",
+    )
     analysis = root / "stage4_tree_confirmation"
     write_stage4_analysis(screening, confirmation, config, frozen, selected, analysis)
     packages = {name: "test" for name in ("numpy", "pandas", "scipy", "scikit-learn",
@@ -71,6 +77,17 @@ def edit():
 
 def change_json(edit, path, **fields):
     edit(path, lambda data: json.dumps(dict(json.loads(data), **fields)).encode())
+
+
+def change_structure_audit(edit, formal, mutate):
+    directory = formal / "stage4_tree_structure_checks"
+    json_path = directory / "structure_checks.json"
+    csv_path = directory / "structure_checks.csv"
+    audit = json.loads(json_path.read_text(encoding="utf-8"))
+    mutate(audit)
+    edit(json_path, lambda data: data)
+    edit(csv_path, lambda data: data)
+    write_structure_audit(audit, directory)
 
 
 def test_publisher_rejects_incomplete_results(tmp_path):
@@ -328,14 +345,28 @@ def test_cli_explicit_short_layout(formal, tmp_path, monkeypatch):
                 (formal / new).rename(formal / old)
 
 
-def test_structure_must_pass_same_threshold_as_audit_cli(formal, edit):
-    import pandas as pd
-    json_path = formal / "stage4_tree_structure_checks/structure_checks.json"
-    rows = json.loads(json_path.read_bytes())
-    rows[0]["split_gain"] = 0.0001  # Positive but CLI explicitly fails <= 1e-3.
-    edit(json_path, lambda _: json.dumps(rows).encode())
-    csv_path = formal / "stage4_tree_structure_checks/structure_checks.csv"
-    edit(csv_path, lambda _: pd.DataFrame(rows).to_csv(index=False).encode())
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda audit: audit["parameters"].update(n=AUDIT_MIN_N - 1),
+        lambda audit: audit["parameters"].update(seed=True),
+        lambda audit: audit["root_checks"][0].update(monte_carlo_split_gain=1e-3),
+        lambda audit: audit["root_checks"][0].update(theoretical_split_gain=1e-3),
+        lambda audit: audit["reconstruction_checks"][0].update(raw_reconstruction_mse=1.0),
+        lambda audit: audit["prohibited_form_checks"][0].update(
+            passed=False, violations=["product threshold"]
+        ),
+        lambda audit: audit["leaf_checks"][0].update(monte_carlo_probability=0.0),
+    ],
+)
+def test_publisher_validates_every_structure_gate_even_if_overall_pass_is_forged(
+    formal, edit, mutate
+):
+    def forge(audit):
+        mutate(audit)
+        audit["passed"] = True
+
+    change_structure_audit(edit, formal, forge)
     with pytest.raises(ValueError, match="structure audit did not pass"):
         validate_stage4_publication(formal)
 

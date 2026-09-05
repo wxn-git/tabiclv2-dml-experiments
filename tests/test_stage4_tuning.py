@@ -186,6 +186,21 @@ def test_tuning_enumerates_cell_target_candidate_replication_product(config):
     assert all(task.config_hash in task.key for task in tasks)
 
 
+def test_fast_tuning_iterator_defaults_to_exactly_one_replication(config):
+    tasks = tuple(iter_tuning_tasks(config, fast=True))
+
+    assert len(tasks) == 24 * 2 * 6
+    assert {task.replication for task in tasks} == {0}
+
+
+@pytest.mark.parametrize("replications", [0, 2, 5, True, 1.0])
+def test_fast_tuning_iterator_rejects_every_explicit_value_except_one(
+    config, replications
+):
+    with pytest.raises(ValueError, match="fast.*exactly one"):
+        tuple(iter_tuning_tasks(config, replications=replications, fast=True))
+
+
 @pytest.mark.parametrize(
     "targets",
     [("l",), ("l", "l"), ("m", "l"), ("l", "m", "g"), "lm"],

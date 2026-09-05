@@ -19,11 +19,10 @@ from pathlib import Path
 
 from .nuisance_cache import NuisanceCache
 from .parallel import WorkerCommand, run_workers
-from .stage4_config import load_stage4_config
+from .stage4_config import load_stage4_config, resolve_stage4_replications
 from .stage4_experiment import (
     build_stage4_nuisance_spec,
     iter_stage4_pairs,
-    validate_stage4_preflight,
     validate_stage4_cached_result,
     validate_stage4_resume_record,
 )
@@ -33,13 +32,9 @@ from .stage4_tuning import _validate_record_metadata, iter_tuning_tasks
 PathArg = str | os.PathLike[str]
 
 
-def _validate_workers(cpu_workers: int, replications: int | None) -> None:
+def _validate_workers(cpu_workers: int) -> None:
     if type(cpu_workers) is not int or not 1 <= cpu_workers <= 8:
         raise ValueError("cpu_workers must be an integer between 1 and 8")
-    if replications is not None and (
-        type(replications) is not int or replications < 1
-    ):
-        raise ValueError("replications must be a positive integer")
 
 
 def _resolve(root: PathArg, value: PathArg) -> Path:
@@ -50,8 +45,6 @@ def _resolve(root: PathArg, value: PathArg) -> Path:
 def _flags(
     replications: int | None, fast: bool, retry_failed: bool, preflight: bool = False,
 ) -> tuple[str, ...]:
-    if replications is None and fast:
-        replications = 1
     return (
         *(("--replications", str(replications)) if replications is not None else ()),
         *(("--fast",) if fast else ()),
@@ -72,9 +65,11 @@ def build_stage4_tuning_commands(
     retry_failed: bool = False,
     preflight: bool = False,
 ) -> tuple[WorkerCommand, ...]:
-    if preflight:
-        raise ValueError("preflight is only supported for full-model confirmation")
-    _validate_workers(cpu_workers, replications)
+    _validate_workers(cpu_workers)
+    config = load_stage4_config(_resolve(project_root, config_path))
+    replications = resolve_stage4_replications(
+        config, "tuning", replications, fast=fast, preflight=preflight
+    )
     common = (
         str(python_executable),
         str(_resolve(project_root, "scripts/run_stage4_tuning.py")),
@@ -107,12 +102,11 @@ def build_stage4_cache_commands(
     retry_failed: bool = False,
     preflight: bool = False,
 ) -> tuple[WorkerCommand, ...]:
-    _validate_workers(cpu_workers, replications)
-    if preflight:
-        replications = validate_stage4_preflight(
-            load_stage4_config(_resolve(project_root, config_path)), phase,
-            replications, fast=fast, preflight=True,
-        )
+    _validate_workers(cpu_workers)
+    config = load_stage4_config(_resolve(project_root, config_path))
+    replications = resolve_stage4_replications(
+        config, phase, replications, fast=fast, preflight=preflight
+    )
     if phase not in {"screening", "confirmation"}:
         raise ValueError("cache phase must be screening or confirmation")
     if phase == "confirmation" and not selected_cells:
@@ -292,15 +286,12 @@ def run_stage4_phase(
     """
     if phase not in {"tuning", "screening", "confirmation"}:
         raise ValueError("phase must be tuning, screening or confirmation")
-    _validate_workers(cpu_workers, replications)
+    _validate_workers(cpu_workers)
     root = Path(project_root).resolve()
     config_path = _resolve(root, config_path)
     config = load_stage4_config(config_path)
-    replications = validate_stage4_preflight(
+    replications = resolve_stage4_replications(
         config, phase, replications, fast=fast, preflight=preflight,
-    )
-    replications = replications if replications is not None else (
-        1 if fast else int(config[phase]["replications"])
     )
     executable_path = Path(python_executable)
     executable = shutil.which(str(

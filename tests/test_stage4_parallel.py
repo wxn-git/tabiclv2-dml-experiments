@@ -422,6 +422,48 @@ def test_fast_command_builders_default_to_one_replication(inputs, builder):
     assert all(option(command, "--replications") == "1" for command in commands)
 
 
+@pytest.mark.parametrize("builder", ["tuning", "cache"])
+@pytest.mark.parametrize("replications", [0, 2, 5, True, 1.0])
+def test_fast_command_builders_reject_every_explicit_value_except_one(
+    inputs, builder, replications
+):
+    with pytest.raises(ValueError, match="fast.*exactly one"):
+        if builder == "tuning":
+            parallel.build_stage4_tuning_commands(
+                sys.executable,
+                ROOT,
+                CONFIG,
+                inputs["output_root"],
+                replications=replications,
+                fast=True,
+            )
+        else:
+            parallel.build_stage4_cache_commands(
+                sys.executable,
+                ROOT,
+                CONFIG,
+                inputs["tuned_models"],
+                inputs["cache_root"],
+                phase="confirmation",
+                selected_cells=inputs["selected_cells"],
+                replications=replications,
+                fast=True,
+            )
+
+
+@pytest.mark.parametrize("phase", ["tuning", "screening", "confirmation"])
+def test_parent_rejects_multi_replication_fast_before_progress_or_processes(
+    inputs, phase
+):
+    inputs["replications"] = 2
+
+    with pytest.raises(ValueError, match="fast.*exactly one"):
+        parallel.run_stage4_phase(phase=phase, fast=True, **inputs)
+
+    assert not inputs["log_dir"].exists()
+    assert not inputs["output_root"].exists()
+
+
 @pytest.mark.parametrize("replications", [0, -1, True, 1.5])
 def test_invalid_replications_rejected_before_launch(inputs, replications):
     inputs["replications"] = replications

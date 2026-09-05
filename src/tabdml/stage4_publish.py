@@ -5,6 +5,7 @@ and compared byte-for-byte, including plots, before any destination is touched.
 """
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import math
@@ -18,7 +19,12 @@ import pandas as pd
 
 from .stage4_analysis import build_stage4_analysis, _write_analysis_bundle
 from .stage4_config import load_stage4_config
-from .stage4_structure import _AUDIT_FIELDS, _DECLARED_ROOTS
+from .stage4_structure import (
+    _AUDIT_FIELDS,
+    _csv_rows,
+    audit_tree_structures,
+    structure_audit_failures,
+)
 from .stage4_tuning import iter_tuning_tasks, select_tuned_xgboost
 
 
@@ -100,28 +106,26 @@ def _snapshot(files, raw):
 
 
 def _structure(files):
-    rows = _json(files["structure_checks.json"])
-    if not isinstance(rows, list) or len(rows) != 12:
-        raise ValueError("structure audit requires exactly 12 roots")
-    identities = set()
-    for row in rows:
-        if set(row) != set(_AUDIT_FIELDS):
-            raise ValueError("invalid structure audit schema")
-        identity = (row["scenario"], row["target"], row["root_variable"])
-        if identity in identities or type(row["root_variable"]) is not int:
-            raise ValueError("duplicate or invalid structure root")
-        identities.add(identity)
-        for field in _AUDIT_FIELDS[3:]:
-            if type(row[field]) not in (int, float) or not math.isfinite(row[field]):
-                raise ValueError("nonfinite structure audit")
-        if (row["threshold"] != 0 or row["split_gain"] <= 1e-3
-                or not 0 < row["left_probability"] < 1):
-            raise ValueError("structure audit did not pass")
-    if identities != set(_DECLARED_ROOTS):
-        raise ValueError("unexpected structure roots")
-    pd.testing.assert_frame_equal(pd.read_csv(files["structure_checks.csv"]),
-                                  pd.DataFrame(rows, columns=_AUDIT_FIELDS),
-                                  check_dtype=False, rtol=1e-12, atol=1e-14)
+    audit = _json(files["structure_checks.json"])
+    failures = structure_audit_failures(audit)
+    if failures:
+        raise ValueError(f"structure audit did not pass: {'; '.join(failures)}")
+
+    parameters = audit["parameters"]
+    expected = audit_tree_structures(n=parameters["n"], seed=parameters["seed"])
+    if json.dumps(audit, sort_keys=True, separators=(",", ":")) != json.dumps(
+        expected, sort_keys=True, separators=(",", ":")
+    ):
+        raise ValueError("structure audit did not pass: diagnostics are not reproducible")
+
+    with files["structure_checks.csv"].open(encoding="utf-8", newline="") as handle:
+        csv_rows = list(csv.DictReader(handle))
+    expected_csv = [
+        {field: "" if row[field] == "" else str(row[field]) for field in _AUDIT_FIELDS}
+        for row in _csv_rows(audit)
+    ]
+    if csv_rows != expected_csv:
+        raise ValueError("structure audit did not pass: CSV disagrees with JSON")
 
 
 def validate_stage4_publication(results_root, expected_replications=100, **paths) -> dict[str, Any]:

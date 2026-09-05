@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tabdml.stage4_config import TreeBenchmarkCell, iter_tree_cells, load_stage4_config
+from tabdml import stage4_config
+from tabdml.stage4_config import (
+    TreeBenchmarkCell,
+    iter_tree_cells,
+    load_stage4_config,
+)
 
 
 CONFIG = Path("configs/stage4_tree_benchmark.yaml")
@@ -229,6 +234,55 @@ def test_nonpositive_replications_are_rejected(section, field, value):
 
     with pytest.raises(ValueError, match="replications"):
         iter_tree_cells(config)
+
+
+@pytest.mark.parametrize(
+    ("phase", "replications", "fast", "preflight", "expected"),
+    [
+        ("tuning", None, False, False, 10),
+        ("screening", None, False, False, 20),
+        ("confirmation", None, False, False, 100),
+        ("confirmation", 5, False, False, 5),
+        ("confirmation", None, False, True, 5),
+        ("tuning", None, True, False, 1),
+        ("screening", None, True, False, 1),
+        ("confirmation", None, True, False, 1),
+        ("confirmation", 1, True, False, 1),
+    ],
+)
+def test_stage4_replication_resolution_preserves_protocol_namespaces(
+    phase, replications, fast, preflight, expected
+):
+    config = load_stage4_config(CONFIG)
+
+    assert stage4_config.resolve_stage4_replications(
+        config,
+        phase,
+        replications,
+        fast=fast,
+        preflight=preflight,
+    ) == expected
+
+
+@pytest.mark.parametrize("replications", [0, 2, 5, True, 1.0])
+def test_fast_replication_resolution_rejects_every_explicit_value_except_one(
+    replications,
+):
+    config = load_stage4_config(CONFIG)
+
+    with pytest.raises(ValueError, match="fast.*exactly one"):
+        stage4_config.resolve_stage4_replications(
+            config, "tuning", replications, fast=True
+        )
+
+
+def test_fast_and_preflight_replication_resolution_are_incompatible():
+    config = load_stage4_config(CONFIG)
+
+    with pytest.raises(ValueError, match="fast.*preflight.*incompatible"):
+        stage4_config.resolve_stage4_replications(
+            config, "confirmation", None, fast=True, preflight=True
+        )
 
 
 @pytest.mark.parametrize("fraction", [0, 1, -0.1, 1.1, True])

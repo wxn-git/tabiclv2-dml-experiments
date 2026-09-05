@@ -19,7 +19,11 @@ from .learners import make_configured_tree_learner
 from .runner import classify_failure
 from .sharding import belongs_to_shard, validate_shard
 from .stage3b_screen import _params_hash
-from .stage4_config import TreeBenchmarkCell, iter_tree_cells
+from .stage4_config import (
+    TreeBenchmarkCell,
+    iter_tree_cells,
+    resolve_stage4_replications,
+)
 from .storage import ResultStore
 
 
@@ -116,14 +120,15 @@ def derive_tuning_seeds(task: Stage4TuningTask) -> dict[str, int]:
 
 def iter_tuning_tasks(
     config: Mapping[str, Any],
-    replications: int,
+    replications: int | None = None,
     num_shards: int = 1,
     shard_index: int = 0,
     fast: bool = False,
 ):
     validate_shard(num_shards, shard_index)
-    if replications < 1:
-        raise ValueError("replications must be at least 1")
+    replications = resolve_stage4_replications(
+        config, "tuning", replications, fast=fast
+    )
     theta0 = _exact_finite_theta0(config["theta0"])
     tuning = config["tuning"]
     raw_targets = tuning["targets"]
