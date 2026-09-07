@@ -1,0 +1,821 @@
+{
+  "formula_declarations": [
+    {
+      "scenario": "tree_stumps",
+      "target": "m",
+      "terms": [
+        {
+          "coefficient": 0.9,
+          "kind": "stump",
+          "root_variable": 0,
+          "threshold": 0.0
+        },
+        {
+          "coefficient": -0.7,
+          "kind": "stump",
+          "root_variable": 1,
+          "threshold": 0.0
+        },
+        {
+          "coefficient": 0.5,
+          "kind": "stump",
+          "root_variable": 2,
+          "threshold": 0.0
+        }
+      ]
+    },
+    {
+      "scenario": "tree_stumps",
+      "target": "g",
+      "terms": [
+        {
+          "coefficient": 0.8,
+          "kind": "stump",
+          "root_variable": 0,
+          "threshold": 0.0
+        },
+        {
+          "coefficient": 0.6,
+          "kind": "stump",
+          "root_variable": 3,
+          "threshold": 0.0
+        },
+        {
+          "coefficient": -0.5,
+          "kind": "stump",
+          "root_variable": 4,
+          "threshold": 0.0
+        }
+      ]
+    },
+    {
+      "scenario": "tree_hierarchical",
+      "target": "m",
+      "terms": [
+        {
+          "kind": "depth_two_tree",
+          "nonpositive_child_increment": -0.4,
+          "nonpositive_child_variable": 2,
+          "positive_child_increment": 0.6,
+          "positive_child_variable": 1,
+          "root_positive_value": 0.8,
+          "root_variable": 0,
+          "threshold": 0.0
+        }
+      ]
+    },
+    {
+      "scenario": "tree_hierarchical",
+      "target": "g",
+      "terms": [
+        {
+          "kind": "depth_two_tree",
+          "nonpositive_child_increment": -0.4,
+          "nonpositive_child_variable": 4,
+          "positive_child_increment": 0.5,
+          "positive_child_variable": 3,
+          "root_positive_value": 0.7,
+          "root_variable": 0,
+          "threshold": 0.0
+        }
+      ]
+    },
+    {
+      "scenario": "tree_forest_sum",
+      "target": "m",
+      "terms": [
+        {
+          "kind": "depth_two_tree",
+          "nonpositive_child_increment": -0.3,
+          "nonpositive_child_variable": 2,
+          "positive_child_increment": 0.4,
+          "positive_child_variable": 1,
+          "root_positive_value": 0.55,
+          "root_variable": 0,
+          "threshold": 0.0
+        },
+        {
+          "kind": "depth_two_tree",
+          "nonpositive_child_increment": 0.3,
+          "nonpositive_child_variable": 5,
+          "positive_child_increment": -0.35,
+          "positive_child_variable": 4,
+          "root_positive_value": 0.45,
+          "root_variable": 3,
+          "threshold": 0.0
+        }
+      ]
+    },
+    {
+      "scenario": "tree_forest_sum",
+      "target": "g",
+      "terms": [
+        {
+          "kind": "depth_two_tree",
+          "nonpositive_child_increment": -0.25,
+          "nonpositive_child_variable": 7,
+          "positive_child_increment": 0.35,
+          "positive_child_variable": 6,
+          "root_positive_value": 0.5,
+          "root_variable": 0,
+          "threshold": 0.0
+        },
+        {
+          "kind": "depth_two_tree",
+          "nonpositive_child_increment": 0.25,
+          "nonpositive_child_variable": 9,
+          "positive_child_increment": -0.3,
+          "positive_child_variable": 8,
+          "root_positive_value": 0.4,
+          "root_variable": 3,
+          "threshold": 0.0
+        }
+      ]
+    }
+  ],
+  "leaf_checks": [
+    {
+      "branch": "root_nonpositive",
+      "monte_carlo_probability": 0.50024,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_stumps",
+      "target": "m",
+      "theoretical_leaf_value": 0.0,
+      "theoretical_probability": 0.5,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_positive",
+      "monte_carlo_probability": 0.49976,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_stumps",
+      "target": "m",
+      "theoretical_leaf_value": 0.9,
+      "theoretical_probability": 0.5,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_nonpositive",
+      "monte_carlo_probability": 0.499485,
+      "passed": true,
+      "root_variable": 1,
+      "scenario": "tree_stumps",
+      "target": "m",
+      "theoretical_leaf_value": -0.0,
+      "theoretical_probability": 0.5,
+      "tree_index": 1
+    },
+    {
+      "branch": "root_positive",
+      "monte_carlo_probability": 0.500515,
+      "passed": true,
+      "root_variable": 1,
+      "scenario": "tree_stumps",
+      "target": "m",
+      "theoretical_leaf_value": -0.7,
+      "theoretical_probability": 0.5,
+      "tree_index": 1
+    },
+    {
+      "branch": "root_nonpositive",
+      "monte_carlo_probability": 0.49889,
+      "passed": true,
+      "root_variable": 2,
+      "scenario": "tree_stumps",
+      "target": "m",
+      "theoretical_leaf_value": 0.0,
+      "theoretical_probability": 0.5,
+      "tree_index": 2
+    },
+    {
+      "branch": "root_positive",
+      "monte_carlo_probability": 0.50111,
+      "passed": true,
+      "root_variable": 2,
+      "scenario": "tree_stumps",
+      "target": "m",
+      "theoretical_leaf_value": 0.5,
+      "theoretical_probability": 0.5,
+      "tree_index": 2
+    },
+    {
+      "branch": "root_nonpositive",
+      "monte_carlo_probability": 0.50024,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_stumps",
+      "target": "g",
+      "theoretical_leaf_value": 0.0,
+      "theoretical_probability": 0.5,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_positive",
+      "monte_carlo_probability": 0.49976,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_stumps",
+      "target": "g",
+      "theoretical_leaf_value": 0.8,
+      "theoretical_probability": 0.5,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_nonpositive",
+      "monte_carlo_probability": 0.50114,
+      "passed": true,
+      "root_variable": 3,
+      "scenario": "tree_stumps",
+      "target": "g",
+      "theoretical_leaf_value": 0.0,
+      "theoretical_probability": 0.5,
+      "tree_index": 1
+    },
+    {
+      "branch": "root_positive",
+      "monte_carlo_probability": 0.49886,
+      "passed": true,
+      "root_variable": 3,
+      "scenario": "tree_stumps",
+      "target": "g",
+      "theoretical_leaf_value": 0.6,
+      "theoretical_probability": 0.5,
+      "tree_index": 1
+    },
+    {
+      "branch": "root_nonpositive",
+      "monte_carlo_probability": 0.50093,
+      "passed": true,
+      "root_variable": 4,
+      "scenario": "tree_stumps",
+      "target": "g",
+      "theoretical_leaf_value": -0.0,
+      "theoretical_probability": 0.5,
+      "tree_index": 2
+    },
+    {
+      "branch": "root_positive",
+      "monte_carlo_probability": 0.49907,
+      "passed": true,
+      "root_variable": 4,
+      "scenario": "tree_stumps",
+      "target": "g",
+      "theoretical_leaf_value": -0.5,
+      "theoretical_probability": 0.5,
+      "tree_index": 2
+    },
+    {
+      "branch": "root_nonpositive_child_nonpositive",
+      "monte_carlo_probability": 0.249965,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_hierarchical",
+      "target": "m",
+      "theoretical_leaf_value": 0.0,
+      "theoretical_probability": 0.25,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_nonpositive_child_positive",
+      "monte_carlo_probability": 0.250275,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_hierarchical",
+      "target": "m",
+      "theoretical_leaf_value": -0.4,
+      "theoretical_probability": 0.25,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_positive_child_nonpositive",
+      "monte_carlo_probability": 0.24977,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_hierarchical",
+      "target": "m",
+      "theoretical_leaf_value": 0.8,
+      "theoretical_probability": 0.25,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_positive_child_positive",
+      "monte_carlo_probability": 0.24999,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_hierarchical",
+      "target": "m",
+      "theoretical_leaf_value": 1.4,
+      "theoretical_probability": 0.25,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_nonpositive_child_nonpositive",
+      "monte_carlo_probability": 0.249175,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_hierarchical",
+      "target": "g",
+      "theoretical_leaf_value": 0.0,
+      "theoretical_probability": 0.25,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_nonpositive_child_positive",
+      "monte_carlo_probability": 0.251065,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_hierarchical",
+      "target": "g",
+      "theoretical_leaf_value": -0.4,
+      "theoretical_probability": 0.25,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_positive_child_nonpositive",
+      "monte_carlo_probability": 0.25003,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_hierarchical",
+      "target": "g",
+      "theoretical_leaf_value": 0.7,
+      "theoretical_probability": 0.25,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_positive_child_positive",
+      "monte_carlo_probability": 0.24973,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_hierarchical",
+      "target": "g",
+      "theoretical_leaf_value": 1.2,
+      "theoretical_probability": 0.25,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_nonpositive_child_nonpositive",
+      "monte_carlo_probability": 0.249965,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_forest_sum",
+      "target": "m",
+      "theoretical_leaf_value": 0.0,
+      "theoretical_probability": 0.25,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_nonpositive_child_positive",
+      "monte_carlo_probability": 0.250275,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_forest_sum",
+      "target": "m",
+      "theoretical_leaf_value": -0.3,
+      "theoretical_probability": 0.25,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_positive_child_nonpositive",
+      "monte_carlo_probability": 0.24977,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_forest_sum",
+      "target": "m",
+      "theoretical_leaf_value": 0.55,
+      "theoretical_probability": 0.25,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_positive_child_positive",
+      "monte_carlo_probability": 0.24999,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_forest_sum",
+      "target": "m",
+      "theoretical_leaf_value": 0.9500000000000001,
+      "theoretical_probability": 0.25,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_nonpositive_child_nonpositive",
+      "monte_carlo_probability": 0.251395,
+      "passed": true,
+      "root_variable": 3,
+      "scenario": "tree_forest_sum",
+      "target": "m",
+      "theoretical_leaf_value": 0.0,
+      "theoretical_probability": 0.25,
+      "tree_index": 1
+    },
+    {
+      "branch": "root_nonpositive_child_positive",
+      "monte_carlo_probability": 0.249745,
+      "passed": true,
+      "root_variable": 3,
+      "scenario": "tree_forest_sum",
+      "target": "m",
+      "theoretical_leaf_value": 0.3,
+      "theoretical_probability": 0.25,
+      "tree_index": 1
+    },
+    {
+      "branch": "root_positive_child_nonpositive",
+      "monte_carlo_probability": 0.249415,
+      "passed": true,
+      "root_variable": 3,
+      "scenario": "tree_forest_sum",
+      "target": "m",
+      "theoretical_leaf_value": 0.45,
+      "theoretical_probability": 0.25,
+      "tree_index": 1
+    },
+    {
+      "branch": "root_positive_child_positive",
+      "monte_carlo_probability": 0.249445,
+      "passed": true,
+      "root_variable": 3,
+      "scenario": "tree_forest_sum",
+      "target": "m",
+      "theoretical_leaf_value": 0.10000000000000003,
+      "theoretical_probability": 0.25,
+      "tree_index": 1
+    },
+    {
+      "branch": "root_nonpositive_child_nonpositive",
+      "monte_carlo_probability": 0.249975,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_forest_sum",
+      "target": "g",
+      "theoretical_leaf_value": 0.0,
+      "theoretical_probability": 0.25,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_nonpositive_child_positive",
+      "monte_carlo_probability": 0.250265,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_forest_sum",
+      "target": "g",
+      "theoretical_leaf_value": -0.25,
+      "theoretical_probability": 0.25,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_positive_child_nonpositive",
+      "monte_carlo_probability": 0.24857,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_forest_sum",
+      "target": "g",
+      "theoretical_leaf_value": 0.5,
+      "theoretical_probability": 0.25,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_positive_child_positive",
+      "monte_carlo_probability": 0.25119,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_forest_sum",
+      "target": "g",
+      "theoretical_leaf_value": 0.85,
+      "theoretical_probability": 0.25,
+      "tree_index": 0
+    },
+    {
+      "branch": "root_nonpositive_child_nonpositive",
+      "monte_carlo_probability": 0.25064,
+      "passed": true,
+      "root_variable": 3,
+      "scenario": "tree_forest_sum",
+      "target": "g",
+      "theoretical_leaf_value": 0.0,
+      "theoretical_probability": 0.25,
+      "tree_index": 1
+    },
+    {
+      "branch": "root_nonpositive_child_positive",
+      "monte_carlo_probability": 0.2505,
+      "passed": true,
+      "root_variable": 3,
+      "scenario": "tree_forest_sum",
+      "target": "g",
+      "theoretical_leaf_value": 0.25,
+      "theoretical_probability": 0.25,
+      "tree_index": 1
+    },
+    {
+      "branch": "root_positive_child_nonpositive",
+      "monte_carlo_probability": 0.24903,
+      "passed": true,
+      "root_variable": 3,
+      "scenario": "tree_forest_sum",
+      "target": "g",
+      "theoretical_leaf_value": 0.4,
+      "theoretical_probability": 0.25,
+      "tree_index": 1
+    },
+    {
+      "branch": "root_positive_child_positive",
+      "monte_carlo_probability": 0.24983,
+      "passed": true,
+      "root_variable": 3,
+      "scenario": "tree_forest_sum",
+      "target": "g",
+      "theoretical_leaf_value": 0.10000000000000003,
+      "theoretical_probability": 0.25,
+      "tree_index": 1
+    }
+  ],
+  "parameters": {
+    "gain_tolerance": 0.001,
+    "mse_tolerance": 1e-24,
+    "n": 200000,
+    "p": 10,
+    "seed": 20260903
+  },
+  "passed": true,
+  "prohibited_form_checks": [
+    {
+      "check": "product_threshold_absent",
+      "passed": true,
+      "violations": []
+    },
+    {
+      "check": "sum_threshold_absent",
+      "passed": true,
+      "violations": []
+    },
+    {
+      "check": "pure_xor_absent",
+      "passed": true,
+      "violations": []
+    },
+    {
+      "check": "exact_branch_mean_cancellation_absent",
+      "passed": true,
+      "violations": []
+    }
+  ],
+  "reconstruction_checks": [
+    {
+      "passed": true,
+      "raw_reconstruction_mse": 1.9241118665197344e-33,
+      "reconstruction_kind": "sum_of_stumps",
+      "scenario": "tree_stumps",
+      "target": "m",
+      "tree_count": 3
+    },
+    {
+      "passed": true,
+      "raw_reconstruction_mse": 3.8623369476719385e-34,
+      "reconstruction_kind": "sum_of_stumps",
+      "scenario": "tree_stumps",
+      "target": "g",
+      "tree_count": 3
+    },
+    {
+      "passed": true,
+      "raw_reconstruction_mse": 0.0,
+      "reconstruction_kind": "depth_two_truth_tree",
+      "scenario": "tree_hierarchical",
+      "target": "m",
+      "tree_count": 1
+    },
+    {
+      "passed": true,
+      "raw_reconstruction_mse": 7.736537623801301e-34,
+      "reconstruction_kind": "depth_two_truth_tree",
+      "scenario": "tree_hierarchical",
+      "target": "g",
+      "tree_count": 1
+    },
+    {
+      "passed": true,
+      "raw_reconstruction_mse": 1.9499655500931886e-34,
+      "reconstruction_kind": "sum_of_two_depth_two_truth_trees",
+      "scenario": "tree_forest_sum",
+      "target": "m",
+      "tree_count": 2
+    },
+    {
+      "passed": true,
+      "raw_reconstruction_mse": 5.855905551706054e-34,
+      "reconstruction_kind": "sum_of_two_depth_two_truth_trees",
+      "scenario": "tree_forest_sum",
+      "target": "g",
+      "tree_count": 2
+    }
+  ],
+  "root_checks": [
+    {
+      "monte_carlo_left_mean": -0.10041180233487924,
+      "monte_carlo_left_probability": 0.50024,
+      "monte_carlo_right_mean": 0.800801384664639,
+      "monte_carlo_right_probability": 0.49976,
+      "monte_carlo_split_gain": 0.203046255323589,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_stumps",
+      "target": "m",
+      "theoretical_left_mean": -0.09999999999999998,
+      "theoretical_left_probability": 0.5,
+      "theoretical_right_mean": 0.7999999999999999,
+      "theoretical_right_probability": 0.5,
+      "theoretical_split_gain": 0.20249999999999985,
+      "threshold": 0.0
+    },
+    {
+      "monte_carlo_left_mean": 0.6999769762855742,
+      "monte_carlo_left_probability": 0.499485,
+      "monte_carlo_right_mean": 0.0007002787129257427,
+      "monte_carlo_right_probability": 0.500515,
+      "monte_carlo_split_gain": 0.1222468452502114,
+      "passed": true,
+      "root_variable": 1,
+      "scenario": "tree_stumps",
+      "target": "m",
+      "theoretical_left_mean": 0.7,
+      "theoretical_left_probability": 0.5,
+      "theoretical_right_mean": 2.7755575615628914e-17,
+      "theoretical_right_probability": 0.5,
+      "theoretical_split_gain": 0.12249999999999983,
+      "threshold": 0.0
+    },
+    {
+      "monte_carlo_left_mean": 0.0995810699753453,
+      "monte_carlo_left_probability": 0.49889,
+      "monte_carlo_right_mean": 0.5992666280856498,
+      "monte_carlo_right_probability": 0.50111,
+      "monte_carlo_split_gain": 0.06242110660830352,
+      "passed": true,
+      "root_variable": 2,
+      "scenario": "tree_stumps",
+      "target": "m",
+      "theoretical_left_mean": 0.10000000000000012,
+      "theoretical_left_probability": 0.5,
+      "theoretical_right_mean": 0.5999999999999999,
+      "theoretical_right_probability": 0.5,
+      "theoretical_split_gain": 0.06249999999999978,
+      "threshold": 0.0
+    },
+    {
+      "monte_carlo_left_mean": 0.04786802334879258,
+      "monte_carlo_left_probability": 0.50024,
+      "monte_carlo_right_mean": 0.8516958139907155,
+      "monte_carlo_right_probability": 0.49976,
+      "monte_carlo_split_gain": 0.16153474203445567,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_stumps",
+      "target": "g",
+      "theoretical_left_mean": 0.049999999999999996,
+      "theoretical_left_probability": 0.5,
+      "theoretical_right_mean": 0.8500000000000001,
+      "theoretical_right_probability": 0.5,
+      "theoretical_split_gain": 0.16000000000000003,
+      "threshold": 0.0
+    },
+    {
+      "monte_carlo_left_mean": 0.15008081574011253,
+      "monte_carlo_left_probability": 0.50114,
+      "monte_carlo_right_mean": 0.7504660626227799,
+      "monte_carlo_right_probability": 0.49886,
+      "monte_carlo_split_gain": 0.09011514271159723,
+      "passed": true,
+      "root_variable": 3,
+      "scenario": "tree_stumps",
+      "target": "g",
+      "theoretical_left_mean": 0.15000000000000002,
+      "theoretical_left_probability": 0.5,
+      "theoretical_right_mean": 0.7499999999999999,
+      "theoretical_right_probability": 0.5,
+      "theoretical_split_gain": 0.09000000000000002,
+      "threshold": 0.0
+    },
+    {
+      "monte_carlo_left_mean": 0.7008025073363543,
+      "monte_carlo_left_probability": 0.50093,
+      "monte_carlo_right_mean": 0.19743923698078422,
+      "monte_carlo_right_probability": 0.49907,
+      "monte_carlo_split_gain": 0.06334342634208773,
+      "passed": true,
+      "root_variable": 4,
+      "scenario": "tree_stumps",
+      "target": "g",
+      "theoretical_left_mean": 0.7000000000000001,
+      "theoretical_left_probability": 0.5,
+      "theoretical_right_mean": 0.2,
+      "theoretical_right_probability": 0.5,
+      "theoretical_split_gain": 0.06250000000000006,
+      "threshold": 0.0
+    },
+    {
+      "monte_carlo_left_mean": -0.2001239405085559,
+      "monte_carlo_left_probability": 0.50024,
+      "monte_carlo_right_mean": 1.1001320633904277,
+      "monte_carlo_right_probability": 0.49976,
+      "monte_carlo_split_gain": 0.4226663215364954,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_hierarchical",
+      "target": "m",
+      "theoretical_left_mean": -0.20000000000000004,
+      "theoretical_left_probability": 0.5,
+      "theoretical_right_mean": 1.0999999999999999,
+      "theoretical_right_probability": 0.5,
+      "theoretical_split_gain": 0.4225,
+      "threshold": 0.0
+    },
+    {
+      "monte_carlo_left_mean": -0.20075563729409882,
+      "monte_carlo_left_probability": 0.50024,
+      "monte_carlo_right_mean": 0.9498499279654234,
+      "monte_carlo_right_probability": 0.49976,
+      "monte_carlo_split_gain": 0.3309732154452997,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_hierarchical",
+      "target": "g",
+      "theoretical_left_mean": -0.19999999999999998,
+      "theoretical_left_probability": 0.5,
+      "theoretical_right_mean": 0.9499999999999997,
+      "theoretical_right_probability": 0.5,
+      "theoretical_split_gain": 0.33062499999999995,
+      "threshold": 0.0
+    },
+    {
+      "monte_carlo_left_mean": 0.061564948824564224,
+      "monte_carlo_left_probability": 0.50024,
+      "monte_carlo_right_mean": 0.9626400672322717,
+      "monte_carlo_right_probability": 0.49976,
+      "monte_carlo_split_gain": 0.20298404548583107,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_forest_sum",
+      "target": "m",
+      "theoretical_left_mean": 0.06250000000000003,
+      "theoretical_left_probability": 0.5,
+      "theoretical_right_mean": 0.9625000000000001,
+      "theoretical_right_probability": 0.5,
+      "theoretical_split_gain": 0.20250000000000007,
+      "threshold": 0.0
+    },
+    {
+      "monte_carlo_left_mean": 0.4482160673664046,
+      "monte_carlo_left_probability": 0.50114,
+      "monte_carlo_right_mean": 0.5758474321452913,
+      "monte_carlo_right_probability": 0.49886,
+      "monte_carlo_split_gain": 0.0040724201486513345,
+      "passed": true,
+      "root_variable": 3,
+      "scenario": "tree_forest_sum",
+      "target": "m",
+      "theoretical_left_mean": 0.44999999999999996,
+      "theoretical_left_probability": 0.5,
+      "theoretical_right_mean": 0.5750000000000002,
+      "theoretical_right_probability": 0.5,
+      "theoretical_split_gain": 0.00390625,
+      "threshold": 0.0
+    },
+    {
+      "monte_carlo_left_mean": 0.06172637134175597,
+      "monte_carlo_left_probability": 0.50024,
+      "monte_carlo_right_mean": 0.8635590083239957,
+      "monte_carlo_right_probability": 0.49976,
+      "monte_carlo_split_gain": 0.16073385739938373,
+      "passed": true,
+      "root_variable": 0,
+      "scenario": "tree_forest_sum",
+      "target": "g",
+      "theoretical_left_mean": 0.06250000000000003,
+      "theoretical_left_probability": 0.5,
+      "theoretical_right_mean": 0.8624999999999999,
+      "theoretical_right_probability": 0.5,
+      "theoretical_split_gain": 0.16,
+      "threshold": 0.0
+    },
+    {
+      "monte_carlo_left_mean": 0.39921977890409865,
+      "monte_carlo_left_probability": 0.50114,
+      "monte_carlo_right_mean": 0.5259697109409454,
+      "monte_carlo_right_probability": 0.49886,
+      "monte_carlo_split_gain": 0.004016365439053704,
+      "passed": true,
+      "root_variable": 3,
+      "scenario": "tree_forest_sum",
+      "target": "g",
+      "theoretical_left_mean": 0.39999999999999997,
+      "theoretical_left_probability": 0.5,
+      "theoretical_right_mean": 0.525,
+      "theoretical_right_probability": 0.5,
+      "theoretical_split_gain": 0.003906250000000028,
+      "threshold": 0.0
+    }
+  ],
+  "schema": "stage4_structure_audit_v2"
+}

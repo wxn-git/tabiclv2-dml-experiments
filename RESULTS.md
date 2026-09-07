@@ -153,13 +153,13 @@ Stage 3B 包含三个批次：
 
 ## 7. 下一步实验
 
-若目标是论文投稿，建议在当前代码与配置锁定后：
+Stage 4 已完成原计划中的树状冻结配置确认。若目标是论文投稿，下一步建议：
 
-1. 用新的 seed namespace 对关键 tree 组合运行 200–500 次重复；
-2. 预先声明主比较和评价指标，避免确认阶段继续挑选模型；
+1. 保留 Stage 4 的 `0/6` 结果，不在看到结果后放宽优越性门槛；
+2. 若要继续追踪 `tree_hierarchical` 信号，应新建探索性实验并使用新的 seed namespace，不能把追加重复并入现有确认性检验；
 3. 增加真实或半合成数据，检验 smooth 优势是否具有外部意义；
-4. 将 Stage 2 二次分析完全脚本化；
-5. 报告 Monte Carlo standard error，并把 tree 结果作为机制性负面发现，而不是删除不利场景。
+4. 将 Stage 2 二次分析完全脚本化，并统一报告 Monte Carlo standard error；
+5. 把 tree 结果作为适用边界和机制性发现，而不是删除不利场景。
 
 ## 8. `tree_simple` 轴对齐阈值重跑
 
@@ -168,3 +168,62 @@ Stage 3B 包含三个批次：
 独立确认中，TabICLv2/TabICLv2 的 Bias、RMSE、Coverage 从 `-0.0928 / 0.0958 / 0.06` 改善为 `-0.0022 / 0.0248 / 0.88`；XGBoost/XGBoost 从 `-0.0494 / 0.0550 / 0.46` 改善为 `-0.0115 / 0.0256 / 0.94`。TabICLv2 的处理模型 MSE 从 0.1817 降到 0.0469。
 
 该结果说明复杂阈值边界是原实验失败的重要来源，但改善也包含 `l/m` 误差交叉项的有利抵消。完整汇总与新旧对照见 [`results/published/stage3b_tree_simple/`](results/published/stage3b_tree_simple/)。
+
+## 9. Stage 4：轴对齐树状 DGP 确认性基准
+
+### 9.1 为什么还需要 Stage 4
+
+Stage 3B 的 `tree_simple` 说明：把原始树状 DGP 简化为轴对齐阈值后，TabICLv2 和 XGBoost 都能明显恢复。但单个简化 DGP 仍不能回答“TabICLv2 是否在树状结构下稳定优于 XGBoost”。Stage 4 因此扩大树结构和样本面板，并在查看最终确认结果前冻结选择规则。
+
+实验包含三个树结构：
+
+- `tree_stumps`：若干单变量阈值项相加，边界最简单；
+- `tree_hierarchical`：上层阈值决定下层分支，包含层级交互；
+- `tree_forest_sum`：多个浅树函数相加，模拟较丰富但仍轴对齐的树集成结构。
+
+每种结构在 `standard` 和 `small_n_high_p` 两个面板中筛选，共 24 个候选配置。XGBoost 的 `l` 和 `m` 超参数分别通过独立 tuning 冻结，再从每个 `panel × structure` 组冻结一个确认配置。确认阶段使用新的随机种子，每个配置运行 100 次重复。最终发布产物包含 2,880 条 tuning 记录、4,800 条 screening 记录和 6,000 条 confirmation DML 记录，完整性检查未发现失败、OOM、缺失或静默 fallback。
+
+### 9.2 预声明优越性规则
+
+只有一个冻结配置同时满足以下五项，才声明 TabICLv2-1 优于 tuned-XGBoost：
+
+1. 处理效应 RMSE 改善至少 10%；
+2. 六项主要比较的 Holm 校正 `p` 值严格小于 0.05；
+3. TabICLv2 coverage 不得比 tuned-XGBoost 低超过 0.05；
+4. TabICLv2 coverage 至少为 0.90；
+5. 所有预定方法组合按相同 replication 完整配对，且无失败、OOM、缺失或 fallback。
+
+这些条件同时约束点估计精度、重复检验、区间推断和运行完整性，不能只选择其中对 TabICLv2 有利的指标。
+
+### 9.3 六项冻结比较
+
+| 面板 | 树结构 | `n` | `p` | Tab RMSE | tuned-XGB RMSE | RMSE 改善 | Holm `p` | Tab / XGB coverage | 全部通过 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| small_n_high_p | tree_forest_sum | 500 | 50 | 0.0498 | 0.0557 | 10.57% | 0.6370 | 0.95 / 0.92 | 否 |
+| small_n_high_p | tree_hierarchical | 300 | 50 | 0.0674 | 0.0733 | 8.03% | 0.6370 | 0.90 / 0.88 | 否 |
+| small_n_high_p | tree_stumps | 300 | 50 | 0.0646 | 0.0734 | 12.02% | 0.2721 | 0.94 / 0.89 | 否 |
+| standard | tree_forest_sum | 1000 | 50 | 0.0324 | 0.0341 | 5.07% | 0.9531 | 0.92 / 0.93 | 否 |
+| standard | tree_hierarchical | 1000 | 50 | 0.0370 | 0.0458 | 19.25% | 0.0501 | 0.89 / 0.83 | 否 |
+| standard | tree_stumps | 1000 | 10 | 0.0379 | 0.0372 | -1.94% | 0.9531 | 0.91 / 0.89 | 否 |
+
+TabICLv2-1 在 5/6 个配置中取得更低 RMSE，3/6 达到至少 10% 的改善幅度，但符合全部五项条件的配置数为 **0/6**。因此这些结果可以称为“方向性改善”，不能称为“统计确认的优越性”。
+
+最强信号来自 `standard / tree_hierarchical`：TabICLv2-1 的 RMSE 低 19.25%，未校正配对 `p=0.0083`，平方误差差的 95% 置信区间也完全低于 0。但六项比较经 Holm 校正后 `p=0.0501`，略高于预声明的严格阈值；同时 TabICLv2 coverage 为 0.89，低于 0.90 门槛。事后把 0.0501 解释成“显著”或把 0.89 四舍五入成“达到 0.90”，都会破坏确认性设计。
+
+### 9.4 Nuisance 预测与 DML 结果的关系
+
+在 6 个冻结配置中，有 4 个配置的 `l_mse` 和 `m_mse` 都低于 tuned-XGBoost：两个 `tree_forest_sum` 和两个 `tree_hierarchical` 配置。可是 nuisance prediction 改善并没有稳定转化为满足门槛的处理效应优势。这与 DML 的正交化原理并不矛盾：DML 估计误差受 `l`、`m` 的误差大小、二者的相关方向以及有限样本波动共同影响，单独降低两个平均预测 MSE 并不保证处理效应 RMSE 按固定比例下降，也不保证置信区间覆盖率改善。
+
+两个 `tree_stumps` 配置没有出现一致的 nuisance 优势。尤其在 `standard / tree_stumps` 中，TabICLv2-1 的 `l`、`m` 预测误差和处理效应 RMSE 均略差于 tuned-XGBoost。这一预先保留的落败配置可以防止只报告有利结构。
+
+TabICLv2-8 在六项配置上的平均处理效应 RMSE 没有优于 TabICLv2-1，平均运行时间约为后者的 2.28 倍。因此 Stage 4 继续支持“TabICLv2-1 作为主设置、TabICLv2-8 作为稳健性设置”的选择。
+
+### 9.5 论文结论边界
+
+Stage 4 支持以下表述：
+
+> 在预先冻结的六个轴对齐树状 DGP 配置中，TabICLv2-1 相对 tuned-XGBoost 在五个配置上呈现更低的处理效应 RMSE，并在部分层级树和浅树求和结构中同时改善了两个 nuisance function 的预测误差。然而，没有配置同时满足预声明的效应量、Holm 多重检验、覆盖率和完整性标准，因此本实验未获得 TabICLv2 在树状 DGP 上具有确认性优越性的证据。
+
+这不是“TabICLv2 在树状数据上无效”，也不是“已经证明 TabICLv2 优于 XGBoost”。更准确的论文方向是：TabICLv2 作为 DML nuisance learner 的收益具有明显的 DGP 依赖性；平滑非线性场景已有较稳定正面结果，复杂树状场景暴露了 `m(X)` 瓶颈，而规范轴对齐树状场景呈现值得后续独立研究、但尚未通过确认门槛的信号。
+
+正式报告见 [`analysis_report_zh.md`](results/published/stage4_tree_benchmark/analysis_report_zh.md)，六项配对统计见 [`primary_paired_comparisons.csv`](results/published/stage4_tree_benchmark/primary_paired_comparisons.csv)，完整冻结发布包见 [`results/published/stage4_tree_benchmark/`](results/published/stage4_tree_benchmark/)。
