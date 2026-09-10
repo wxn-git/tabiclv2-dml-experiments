@@ -3,6 +3,7 @@ import pytest
 
 from tabdml.figures import (
     make_accuracy_cost_figure,
+    make_treatment_effect_p_trend_figure,
     prepare_treatment_effect_p_trend_data,
 )
 
@@ -93,3 +94,40 @@ def test_prepare_treatment_effect_p_trend_data_selects_fixed_n_panels():
     assert result.loc[result["method_label"] == "Tuned XGBoost", "stage"].eq("Stage 4 screening").all()
     assert result["treatment_effect_mse"].equals(result["rmse"].pow(2))
     assert result["treatment_effect_mse"].max() == pytest.approx(0.12**2)
+
+
+def test_treatment_effect_p_trend_figure_exports_png_pdf_and_csv(tmp_path):
+    panel_specs = [
+        ("stage2_linear", "Linear", "Stage 2", 2000, 100),
+        ("stage2_smooth", "Smooth", "Stage 2", 1000, 100),
+        ("stage2_tree", "Original tree", "Stage 2", 5000, 100),
+        ("stage4_tree_stumps", "Tree stumps", "Stage 4 screening", 1000, 20),
+        ("stage4_tree_hierarchical", "Tree hierarchical", "Stage 4 screening", 1000, 20),
+        ("stage4_tree_forest_sum", "Tree forest-sum", "Stage 4 screening", 1000, 20),
+    ]
+    plot_data = pd.DataFrame(
+        [
+            {
+                "stage": stage,
+                "panel_key": panel_key,
+                "panel_title": title,
+                "n": n,
+                "p": p,
+                "replications": replications,
+                "method": "tabiclv2_1",
+                "method_label": "TabICLv2-1",
+                "rmse": 0.1,
+                "treatment_effect_mse": 0.01,
+            }
+            for panel_key, title, stage, n, replications in panel_specs
+            for p in [10, 50]
+        ]
+    )
+
+    outputs = make_treatment_effect_p_trend_figure(plot_data, tmp_path)
+
+    assert set(outputs) == {"png", "pdf", "csv"}
+    assert all(path.exists() and path.stat().st_size > 0 for path in outputs.values())
+    exported = pd.read_csv(outputs["csv"])
+    assert len(exported) == len(plot_data)
+    assert (exported["treatment_effect_mse"] > 0).all()

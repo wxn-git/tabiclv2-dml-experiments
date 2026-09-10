@@ -7,6 +7,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 import pandas as pd
 import seaborn as sns
 
@@ -163,3 +164,112 @@ def prepare_treatment_effect_p_trend_data(
             "treatment_effect_mse",
         ]
     ].reset_index(drop=True)
+
+
+def make_treatment_effect_p_trend_figure(
+    plot_data: pd.DataFrame,
+    output_dir: str | Path,
+) -> dict[str, Path]:
+    """Render the six-panel exploratory feature-dimension figure."""
+
+    required = {
+        "stage",
+        "panel_key",
+        "panel_title",
+        "n",
+        "p",
+        "replications",
+        "method",
+        "method_label",
+        "rmse",
+        "treatment_effect_mse",
+    }
+    missing = required.difference(plot_data.columns)
+    if missing:
+        raise ValueError(f"Missing plotting columns: {sorted(missing)}")
+    if plot_data.empty:
+        raise ValueError("No rows are available for the p-trend figure.")
+    if (pd.to_numeric(plot_data["treatment_effect_mse"], errors="raise") <= 0).any():
+        raise ValueError("Treatment-effect MSE must be positive for a logarithmic axis.")
+
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    basename = "treatment_effect_mse_by_p_exploratory"
+    paths = {
+        "png": output / f"{basename}.png",
+        "pdf": output / f"{basename}.pdf",
+        "csv": output / f"{basename}_data.csv",
+    }
+    plot_data.to_csv(paths["csv"], index=False)
+
+    styles = {
+        "tabiclv2_1": {"color": "#D55E00", "marker": "o", "linestyle": "-"},
+        "tabiclv2_8": {"color": "#CC79A7", "marker": "^", "linestyle": "--"},
+        "xgboost": {"color": "#0072B2", "marker": "s", "linestyle": "-"},
+        "xgboost_tuned": {"color": "#009E73", "marker": "D", "linestyle": ":"},
+    }
+    panel_order = [spec["panel_key"] for spec in _P_TREND_PANELS]
+    method_order = list(_P_TREND_METHOD_LABELS)
+
+    sns.set_theme(style="whitegrid", context="paper")
+    fig, axes = plt.subplots(2, 3, figsize=(13.2, 7.4), sharey=True)
+    legend_handles: dict[str, object] = {}
+    for panel_index, (axis, panel_key) in enumerate(zip(axes.flat, panel_order, strict=True)):
+        panel = plot_data.loc[plot_data["panel_key"].eq(panel_key)].copy()
+        if panel.empty:
+            raise ValueError(f"Missing panel data: {panel_key}")
+        if panel["n"].nunique() != 1 or panel["replications"].nunique() != 1:
+            raise ValueError(f"Panel {panel_key} mixes sample sizes or replication counts.")
+
+        for method in method_order:
+            series = panel.loc[panel["method"].eq(method)].sort_values("p")
+            if series.empty:
+                continue
+            style = styles[method]
+            (line,) = axis.plot(
+                series["p"],
+                series["treatment_effect_mse"],
+                label=series["method_label"].iloc[0],
+                color=style["color"],
+                marker=style["marker"],
+                linestyle=style["linestyle"] if len(series) > 1 else "None",
+                linewidth=1.8,
+                markersize=6,
+                markeredgecolor="white",
+                markeredgewidth=0.6,
+            )
+            legend_handles.setdefault(method, line)
+
+        title = panel["panel_title"].iloc[0]
+        stage = panel["stage"].iloc[0]
+        n = int(panel["n"].iloc[0])
+        replications = int(panel["replications"].iloc[0])
+        axis.set_title(f"({chr(97 + panel_index)}) {title}\n{stage}, n={n}, R={replications}", pad=8)
+        axis.set_xlabel("Feature dimension p")
+        axis.set_xticks(sorted(panel["p"].unique()))
+        axis.set_yscale("log")
+        axis.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.4g}"))
+        axis.grid(True, which="major", color="#D9D9D9", linewidth=0.7)
+        axis.grid(True, which="minor", color="#EEEEEE", linewidth=0.45)
+        for spine in axis.spines.values():
+            spine.set_color("#333333")
+            spine.set_linewidth(0.8)
+
+    axes[0, 0].set_ylabel("Treatment-effect MSE (log scale)")
+    axes[1, 0].set_ylabel("Treatment-effect MSE (log scale)")
+    ordered_handles = [legend_handles[key] for key in method_order if key in legend_handles]
+    ordered_labels = [_P_TREND_METHOD_LABELS[key] for key in method_order if key in legend_handles]
+    fig.legend(
+        ordered_handles,
+        ordered_labels,
+        loc="lower center",
+        ncol=len(ordered_handles),
+        frameon=False,
+        bbox_to_anchor=(0.5, 0.02),
+    )
+    fig.suptitle("Treatment-effect MSE across feature dimensions", fontsize=15, y=0.99)
+    fig.subplots_adjust(left=0.08, right=0.99, top=0.88, bottom=0.14, wspace=0.22, hspace=0.42)
+    fig.savefig(paths["png"], dpi=300, bbox_inches="tight", facecolor="white")
+    fig.savefig(paths["pdf"], bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return paths
