@@ -1,3 +1,6 @@
+import subprocess
+import sys
+
 import pandas as pd
 import pytest
 
@@ -131,3 +134,73 @@ def test_treatment_effect_p_trend_figure_exports_png_pdf_and_csv(tmp_path):
     exported = pd.read_csv(outputs["csv"])
     assert len(exported) == len(plot_data)
     assert (exported["treatment_effect_mse"] > 0).all()
+
+
+def test_exploratory_p_mse_script_generates_all_outputs(tmp_path):
+    stage2 = pd.DataFrame(
+        [
+            {
+                "scenario": scenario,
+                "n": n,
+                "p": p,
+                "learner": learner,
+                "success_count": 100,
+                "rmse": rmse,
+            }
+            for scenario, n, dimensions in [
+                ("linear", 2000, [50]),
+                ("smooth", 1000, [50, 100]),
+                ("tree", 5000, [10, 50]),
+            ]
+            for p in dimensions
+            for learner, rmse in [("tabiclv2_1", 0.10), ("tabiclv2_8", 0.11), ("xgboost", 0.12)]
+        ]
+    )
+    stage4 = pd.DataFrame(
+        [
+            {
+                "panel": "standard",
+                "scenario": scenario,
+                "n": 1000,
+                "p": p,
+                "method": method,
+                "replications": 20,
+                "rmse": rmse,
+            }
+            for scenario in ["tree_stumps", "tree_hierarchical", "tree_forest_sum"]
+            for p in [10, 50]
+            for method, rmse in [
+                ("tabiclv2_1", 0.10),
+                ("tabiclv2_8", 0.11),
+                ("xgboost", 0.12),
+                ("xgboost_tuned", 0.09),
+            ]
+        ]
+    )
+    stage2_path = tmp_path / "stage2.csv"
+    stage4_path = tmp_path / "stage4.csv"
+    output_dir = tmp_path / "figure"
+    stage2.to_csv(stage2_path, index=False)
+    stage4.to_csv(stage4_path, index=False)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/make_exploratory_p_mse_figure.py",
+            "--stage2-summary",
+            str(stage2_path),
+            "--stage4-screening",
+            str(stage4_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stderr == ""
+    assert (output_dir / "treatment_effect_mse_by_p_exploratory.png").exists()
+    assert (output_dir / "treatment_effect_mse_by_p_exploratory.pdf").exists()
+    assert (output_dir / "treatment_effect_mse_by_p_exploratory_data.csv").exists()

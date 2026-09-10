@@ -1,0 +1,40 @@
+stage,panel_key,panel_title,n,p,replications,method,method_label,rmse,treatment_effect_mse
+Stage 2,stage2_linear,Linear,2000,50,100,tabiclv2_1,TabICLv2-1,0.0249515172735219,0.0006225782142508617
+Stage 2,stage2_linear,Linear,2000,50,100,tabiclv2_8,TabICLv2-8,0.0250152222965886,0.0006257613465477435
+Stage 2,stage2_linear,Linear,2000,50,100,xgboost,XGBoost,0.0311887578260985,0.0009727386147350204
+Stage 2,stage2_smooth,Smooth,1000,50,100,tabiclv2_1,TabICLv2-1,0.0358297969757176,0.0012837743513211422
+Stage 2,stage2_smooth,Smooth,1000,50,100,tabiclv2_8,TabICLv2-8,0.0351234753060439,0.0012336585175742756
+Stage 2,stage2_smooth,Smooth,1000,50,100,xgboost,XGBoost,0.0401324380946636,0.0016106125874220064
+Stage 2,stage2_smooth,Smooth,1000,100,100,tabiclv2_1,TabICLv2-1,0.0379411639395885,0.0014395319210907306
+Stage 2,stage2_smooth,Smooth,1000,100,100,tabiclv2_8,TabICLv2-8,0.0381945551847418,0.001458824045760287
+Stage 2,stage2_smooth,Smooth,1000,100,100,xgboost,XGBoost,0.0449991250496945,0.0020249212552380428
+Stage 2,stage2_tree,Original tree,5000,10,100,tabiclv2_1,TabICLv2-1,0.0936333803495538,0.008767209915684209
+Stage 2,stage2_tree,Original tree,5000,10,100,tabiclv2_8,TabICLv2-8,0.0962674558385997,0.009267423053636745
+Stage 2,stage2_tree,Original tree,5000,10,100,xgboost,XGBoost,0.043784420889464,0.0019170755126257314
+Stage 2,stage2_tree,Original tree,5000,50,100,tabiclv2_1,TabICLv2-1,0.1067655447239615,0.011398881540204225
+Stage 2,stage2_tree,Original tree,5000,50,100,tabiclv2_8,TabICLv2-8,0.1156774991493824,0.013381283809455366
+Stage 2,stage2_tree,Original tree,5000,50,100,xgboost,XGBoost,0.1012633783671447,0.01025427179832751
+Stage 4 screening,stage4_tree_stumps,Tree stumps,1000,10,20,tabiclv2_1,TabICLv2-1,0.0278045616859,0.0007730936505450181
+Stage 4 screening,stage4_tree_stumps,Tree stumps,1000,10,20,tabiclv2_8,TabICLv2-8,0.0267281833271,0.0007143957839670663
+Stage 4 screening,stage4_tree_stumps,Tree stumps,1000,10,20,xgboost,XGBoost,0.0378277689333,0.0014309401024711365
+Stage 4 screening,stage4_tree_stumps,Tree stumps,1000,10,20,xgboost_tuned,Tuned XGBoost,0.0302197361013,0.0009132324500322146
+Stage 4 screening,stage4_tree_stumps,Tree stumps,1000,50,20,tabiclv2_1,TabICLv2-1,0.0370737944183,0.0013744662325703722
+Stage 4 screening,stage4_tree_stumps,Tree stumps,1000,50,20,tabiclv2_8,TabICLv2-8,0.0360261491884,0.0012978834253448538
+Stage 4 screening,stage4_tree_stumps,Tree stumps,1000,50,20,xgboost,XGBoost,0.0462034865329,0.0021347621677958715
+Stage 4 screening,stage4_tree_stumps,Tree stumps,1000,50,20,xgboost_tuned,Tuned XGBoost,0.036259583378,0.0013147573867461338
+Stage 4 screening,stage4_tree_hierarchical,Tree hierarchical,1000,10,20,tabiclv2_1,TabICLv2-1,0.0341460740341,0.0011659543719422382
+Stage 4 screening,stage4_tree_hierarchical,Tree hierarchical,1000,10,20,tabiclv2_8,TabICLv2-8,0.0337110595754,0.001136435537696168
+Stage 4 screening,stage4_tree_hierarchical,Tree hierarchical,1000,10,20,xgboost,XGBoost,0.0427332611625,0.001826131609582431
+Stage 4 screening,stage4_tree_hierarchical,Tree hierarchical,1000,10,20,xgboost_tuned,Tuned XGBoost,0.0380863640958,0.0014505711300378432
+Stage 4 screening,stage4_tree_hierarchical,Tree hierarchical,1000,50,20,tabiclv2_1,TabICLv2-1,0.0278156132514,0.0007737083405514593
+Stage 4 screening,stage4_tree_hierarchical,Tree hierarchical,1000,50,20,tabiclv2_8,TabICLv2-8,0.028245913891,0.0007978316515377868
+Stage 4 screening,stage4_tree_hierarchical,Tree hierarchical,1000,50,20,xgboost,XGBoost,0.0314651930808,0.0009900583756120242
+Stage 4 screening,stage4_tree_hierarchical,Tree hierarchical,1000,50,20,xgboost_tuned,Tuned XGBoost,0.0394291847706,0.001554660611674115
+Stage 4 screening,stage4_tree_forest_sum,Tree forest-sum,1000,10,20,tabiclv2_1,TabICLv2-1,0.036426529491,0.0013268920507586925
+Stage 4 screening,stage4_tree_forest_sum,Tree forest-sum,1000,10,20,tabiclv2_8,TabICLv2-8,0.0377259495491,0.0014232472693812388
+Stage 4 screening,stage4_tree_forest_sum,Tree forest-sum,1000,10,20,xgboost,XGBoost,0.0465037349857,0.002162597367620218
+Stage 4 screening,stage4_tree_forest_sum,Tree forest-sum,1000,10,20,xgboost_tuned,Tuned XGBoost,0.0442455051515,0.0019576647261114128
+Stage 4 screening,stage4_tree_forest_sum,Tree forest-sum,1000,50,20,tabiclv2_1,TabICLv2-1,0.0308437407039,0.0009513363406094176
+Stage 4 screening,stage4_tree_forest_sum,Tree forest-sum,1000,50,20,tabiclv2_8,TabICLv2-8,0.0317670742812,0.0010091470083872785
+Stage 4 screening,stage4_tree_forest_sum,Tree forest-sum,1000,50,20,xgboost,XGBoost,0.0423685978458,0.0017950980834191283
+Stage 4 screening,stage4_tree_forest_sum,Tree forest-sum,1000,50,20,xgboost_tuned,Tuned XGBoost,0.0466860922803,0.002179591212404687
