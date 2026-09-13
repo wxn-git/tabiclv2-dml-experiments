@@ -75,6 +75,35 @@ def test_profiles_preserve_exact_counts_names_and_unique_namespaces():
     ) == 4
 
 
+def test_profile_with_extra_field_fails_closed_with_useful_value_error(tmp_path):
+    config = load_stage5_config(CONFIG)
+    config["profiles"]["smoke"]["unexpected"] = "value"
+
+    with pytest.raises(ValueError, match="profiles.smoke.*unexpected fields.*unexpected"):
+        load_stage5_config(_write_config(tmp_path, config))
+
+
+def test_reordered_profile_mapping_keys_preserve_semantic_behavior(tmp_path):
+    config = load_stage5_config(CONFIG)
+    config["profiles"] = {
+        key: config["profiles"][key]
+        for key in ("formal", "smoke", "preflight")
+    }
+
+    loaded = load_stage5_config(_write_config(tmp_path, config))
+
+    assert [
+        resolve_stage5_profile(loaded, name)
+        for name in ("smoke", "preflight", "formal")
+    ] == [
+        resolve_stage5_profile(load_stage5_config(CONFIG), name)
+        for name in ("smoke", "preflight", "formal")
+    ]
+    assert stage5_config_fingerprint(loaded) == stage5_config_fingerprint(
+        load_stage5_config(CONFIG)
+    )
+
+
 @pytest.mark.parametrize("profile", ["smoke", "preflight", "formal"])
 def test_profile_override_may_only_equal_configured_contract(profile):
     config = load_stage5_config(CONFIG)

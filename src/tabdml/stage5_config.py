@@ -200,14 +200,25 @@ def _validate_tuning(config: Mapping[str, Any]) -> None:
 
 def _validate_profiles(config: Mapping[str, Any]) -> None:
     profiles = _mapping(config["profiles"], "profiles")
-    if tuple(profiles) != _PROFILE_ORDER:
-        if set(profiles) != set(_PROFILE_ORDER):
-            raise ValueError("profiles must contain exactly smoke, preflight, and formal")
-        raise ValueError("profiles must use the exact smoke, preflight, formal order")
+    if set(profiles) != set(_PROFILE_ORDER):
+        raise ValueError("profiles must contain exactly smoke, preflight, and formal")
     namespaces = []
     for key in _PROFILE_ORDER:
         profile = _mapping(profiles[key], f"profiles.{key}")
-        _fields(profile, {"name", "stage", "seed_namespace", "replications", "full_settings"}, f"profiles.{key}")
+        required_fields = {
+            "name",
+            "stage",
+            "seed_namespace",
+            "replications",
+            "full_settings",
+        }
+        _fields(profile, required_fields, f"profiles.{key}")
+        unexpected = set(profile).difference(required_fields)
+        if unexpected:
+            raise ValueError(
+                f"profiles.{key} has unexpected fields: "
+                f"{', '.join(sorted(unexpected))}"
+            )
         name, namespace, replications, full_settings = _PROFILE_CONTRACT[key]
         expected = {
             "name": name,
