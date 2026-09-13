@@ -151,8 +151,12 @@ def test_sharding_is_deterministic_complete_and_disjoint(config):
 
 
 def test_candidates_and_targets_share_data_and_split_but_not_learner_seed(config):
-    tasks = tuple(iter_stage5_tuning_tasks(config, replications=1))
-    same_rep = [task for task in tasks if task.scenario == "linear"]
+    tasks = tuple(iter_stage5_tuning_tasks(config))
+    same_rep = [
+        task
+        for task in tasks
+        if task.scenario == "linear" and task.replication == 0
+    ]
     seeds = [derive_stage5_tuning_seeds(task) for task in same_rep]
     assert len({seed["data_seed"] for seed in seeds}) == 1
     assert len({seed["split_seed"] for seed in seeds}) == 1
@@ -160,7 +164,7 @@ def test_candidates_and_targets_share_data_and_split_but_not_learner_seed(config
 
 
 def test_fast_and_full_identity_caps_only_effective_estimators(config):
-    full = next(iter_stage5_tuning_tasks(config, replications=1))
+    full = next(iter_stage5_tuning_tasks(config))
     fast = next(iter_stage5_tuning_tasks(config, execution_profile="fast"))
     assert full.nominal_config_hash == fast.nominal_config_hash
     assert full.config_hash != fast.config_hash
@@ -195,7 +199,19 @@ def test_fit_uses_observed_target_and_records_observed_and_truth_metrics(
     assert np.isfinite(record["runtime_seconds"])
 
 
-def test_resume_validates_success_and_failed_records_require_retry(monkeypatch, tmp_path):
+@pytest.mark.parametrize("terminal_status", ["failed", "oom"])
+def test_resume_terminal_failures_require_retry(
+    monkeypatch, tmp_path, terminal_status
+):
+    task = _task()
+    ResultStore(tmp_path).write({**_record(task), "status": terminal_status})
+    assert run_stage5_tuning_task(task, tmp_path)["status"] == "skipped"
+    monkeypatch.setattr("tabdml.stage5_tuning.simulate_plr", lambda *a, **k: _data())
+    monkeypatch.setattr("tabdml.stage5_tuning.make_configured_tree_learner", lambda *a, **k: _ZeroModel([]))
+    assert run_stage5_tuning_task(task, tmp_path, retry_failed=True)["status"] == "success"
+
+
+def test_resume_validates_success_and_rejects_unknown_status(tmp_path):
     task = _task()
     ResultStore(tmp_path).write(_record(task))
     assert run_stage5_tuning_task(task, tmp_path) == {"task_key": task.key, "status": "skipped"}
@@ -205,11 +221,15 @@ def test_resume_validates_success_and_failed_records_require_retry(monkeypatch, 
     with pytest.raises(ValueError, match="data_seed mismatch"):
         run_stage5_tuning_task(task, tmp_path)
 
-    ResultStore(tmp_path).write({**_record(task), "status": "failed"})
-    assert run_stage5_tuning_task(task, tmp_path)["status"] == "skipped"
-    monkeypatch.setattr("tabdml.stage5_tuning.simulate_plr", lambda *a, **k: _data())
-    monkeypatch.setattr("tabdml.stage5_tuning.make_configured_tree_learner", lambda *a, **k: _ZeroModel([]))
-    assert run_stage5_tuning_task(task, tmp_path, retry_failed=True)["status"] == "success"
+    ResultStore(tmp_path).write({**_record(task), "status": "mystery"})
+    with pytest.raises(ValueError, match="status"):
+        run_stage5_tuning_task(task, tmp_path, retry_failed=True)
+
+
+@pytest.mark.parametrize("replications", [1, 9, 11])
+def test_full_profile_rejects_non_contract_replication_overrides(config, replications):
+    with pytest.raises(ValueError, match="full.*exactly 10"):
+        tuple(iter_stage5_tuning_tasks(config, replications=replications))
 
 
 def test_selector_uses_observed_loss_and_configured_order_for_ties(config):
@@ -256,6 +276,24 @@ def test_selector_fails_closed_on_invalid_universe(config, mutation, message):
         select_stage5_tuning(records, tiny, "full")
 
 
+@pytest.mark.parametrize(
+    ("field", "alias"),
+    [("theta0", True), ("n", 8.0), ("replication", False)],
+)
+def test_selector_metadata_comparisons_are_type_strict(config, field, alias):
+    tiny = _tiny_config(config)
+    fingerprint = stage5_config_fingerprint(tiny)
+    tasks = [
+        _task(target, candidate, config_fingerprint=fingerprint)
+        for target in ("l", "m")
+        for candidate in ("z-first", "a-second")
+    ]
+    records = [_record(task) for task in tasks]
+    records[0][field] = alias
+    with pytest.raises(ValueError, match=rf"{field} mismatch"):
+        select_stage5_tuning(records, tiny, "full")
+
+
 def test_run_fingerprint_is_deterministic_and_profile_sensitive(config):
     assert stage5_tuning_run_fingerprint(config, 10, "full") == stage5_tuning_run_fingerprint(config, 10, "full")
     assert stage5_tuning_run_fingerprint(config, 10, "full") != stage5_tuning_run_fingerprint(config, 1, "fast")
@@ -287,4 +325,16 @@ def test_frozen_loader_validates_schema_and_provenance(tmp_path, config):
     frozen["tuning_run_fingerprint"] = "forged"
     output.write_text(json.dumps(frozen), encoding="utf-8")
     with pytest.raises(ValueError, match="tuning_run_fingerprint"):
+        load_stage5_tuning(output, tiny, "full")
+
+
+def test_frozen_loader_rejects_boolean_replication_alias(tmp_path, config):
+    tiny = _tiny_config(config)
+    fingerprint = stage5_config_fingerprint(tiny)
+    tasks = [_task(t, c, config_fingerprint=fingerprint) for t in ("l", "m") for c in ("z-first", "a-second")]
+    output = tmp_path / "selected.json"
+    frozen = write_stage5_tuning([_record(task) for task in tasks], tiny, output, "full")
+    frozen["expected_replications"] = True
+    output.write_text(json.dumps(frozen), encoding="utf-8")
+    with pytest.raises(ValueError, match="expected_replications"):
         load_stage5_tuning(output, tiny, "full")

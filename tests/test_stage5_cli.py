@@ -40,13 +40,13 @@ def test_cli_modules_import_from_foreign_current_directory(tmp_path):
 
 def test_runner_resolves_paths_from_repo_root_and_uses_sharded_result_store(monkeypatch, tmp_path):
     config = load_stage5_config(CONFIG)
-    tasks = tuple(iter_stage5_tuning_tasks(config, replications=1, num_shards=2, shard_index=1))[:2]
+    tasks = tuple(iter_stage5_tuning_tasks(config, num_shards=2, shard_index=1))[:2]
     seen = []
     monkeypatch.setattr(run_stage5_tuning, "__file__", str(tmp_path / "project" / "scripts" / "run_stage5_tuning.py"))
     monkeypatch.setattr(run_stage5_tuning, "load_stage5_config", lambda path: (seen.append(Path(path)), config)[1])
     monkeypatch.setattr(run_stage5_tuning, "iter_stage5_tuning_tasks", lambda *a, **k: iter(tasks))
     monkeypatch.setattr(run_stage5_tuning, "run_stage5_tuning_task", lambda task, output_root, retry_failed=False: (seen.append(Path(output_root)), {"status": "success"})[1])
-    monkeypatch.setattr(sys, "argv", ["run_stage5_tuning.py", "--config", "configs/stage5_sensitivity.yaml", "--output-root", "results/raw", "--replications", "1", "--num-shards", "2", "--shard-index", "1"])
+    monkeypatch.setattr(sys, "argv", ["run_stage5_tuning.py", "--config", "configs/stage5_sensitivity.yaml", "--output-root", "results/raw", "--num-shards", "2", "--shard-index", "1"])
     assert run_stage5_tuning.main() == 0
     assert seen[0] == tmp_path / "project" / "configs" / "stage5_sensitivity.yaml"
     assert seen[1:] == [tmp_path / "project" / "results" / "raw"] * 2
@@ -74,3 +74,29 @@ def test_selector_cli_rejects_duplicate_keys_across_roots(monkeypatch, tmp_path)
     monkeypatch.setattr(sys, "argv", ["select_stage5_tuning.py", "--config", str(CONFIG.resolve()), "--input-root", str(tmp_path / "one"), "--input-root", str(tmp_path / "two"), "--output", str(tmp_path / "out.json"), "--execution-profile", "fast"])
     with pytest.raises(ValueError, match="duplicate"):
         select_stage5_tuning.main()
+
+
+@pytest.mark.parametrize("replications", [1, 9, 11])
+def test_runner_cli_cannot_weaken_full_replication_contract(
+    monkeypatch, tmp_path, replications
+):
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid replication count must fail before task execution")
+
+    monkeypatch.setattr(run_stage5_tuning, "run_stage5_tuning_task", forbidden)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_stage5_tuning.py",
+            "--config",
+            str(CONFIG.resolve()),
+            "--output-root",
+            str(tmp_path / "raw"),
+            "--replications",
+            str(replications),
+        ],
+    )
+    with pytest.raises(ValueError, match="full.*exactly 10"):
+        run_stage5_tuning.main()
+    assert not (tmp_path / "raw").exists()

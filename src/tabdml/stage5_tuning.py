@@ -35,6 +35,21 @@ def _finite_number(value: Any, name: str) -> float:
     return converted
 
 
+def _type_strict_equal(actual: Any, expected: Any) -> bool:
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(expected, Mapping):
+        return set(actual) == set(expected) and all(
+            _type_strict_equal(actual[key], expected[key]) for key in expected
+        )
+    if isinstance(expected, Sequence) and not isinstance(expected, (str, bytes)):
+        return len(actual) == len(expected) and all(
+            _type_strict_equal(left, right)
+            for left, right in zip(actual, expected)
+        )
+    return actual == expected
+
+
 @dataclass(frozen=True)
 class Stage5TuningTask:
     stage: str
@@ -107,12 +122,16 @@ def _resolve_replications(
 ) -> int:
     if execution_profile not in _EXECUTION_PROFILES:
         raise ValueError("execution_profile must be 'full' or 'fast'")
-    expected = 1 if execution_profile == "fast" else int(config["tuning"]["replications"])
+    configured = config["tuning"]["replications"]
+    if type(configured) is not int or configured < 1:
+        raise ValueError("config tuning.replications must be a positive native integer")
+    expected = 1 if execution_profile == "fast" else configured
     value = expected if replications is None else replications
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ValueError("replications must be a positive integer")
-    if execution_profile == "fast" and value != 1:
-        raise ValueError("fast execution profile requires exactly one replication")
+    if type(value) is not int or value != expected:
+        raise ValueError(
+            f"{execution_profile} execution profile requires exactly "
+            f"{expected} replication{'s' if expected != 1 else ''}"
+        )
     return value
 
 
@@ -184,7 +203,7 @@ def _record_base(task: Stage5TuningTask) -> dict[str, Any]:
 def _validate_record_metadata(record: Mapping[str, Any], task: Stage5TuningTask) -> None:
     expected = _record_base(task)
     for field, value in expected.items():
-        if record.get(field) != value:
+        if not _type_strict_equal(record.get(field), value):
             raise ValueError(f"Invalid Stage 5 tuning record {task.key}: {field} mismatch")
     if _params_hash(dict(record["nominal_params"])) != task.nominal_config_hash:
         raise ValueError(f"Invalid Stage 5 tuning record {task.key}: nominal_config_hash mismatch")
@@ -206,10 +225,11 @@ def run_stage5_tuning_task(
         if status == "success":
             _validate_record_metadata(previous, task)
             return {"task_key": task.key, "status": "skipped"}
-        if status == "failed" and not retry_failed:
-            return {"task_key": task.key, "status": "skipped"}
-        if status != "failed":
+        if status not in {"failed", "oom"}:
             raise ValueError(f"Invalid Stage 5 tuning record {task.key}: status")
+        _validate_record_metadata(previous, task)
+        if not retry_failed:
+            return {"task_key": task.key, "status": "skipped"}
 
     store = ResultStore(output_root)
     started = time.perf_counter()
@@ -402,7 +422,7 @@ def validate_frozen_stage5_tuning(
         },
     }
     for field, value in expected.items():
-        if frozen.get(field) != value:
+        if not _type_strict_equal(frozen.get(field), value):
             raise ValueError(f"Frozen Stage 5 tuning {field} mismatch")
 
     candidates = {
@@ -448,7 +468,7 @@ def validate_frozen_stage5_tuning(
                     "selection_metric": "mean_validation_y_mse" if target == "l" else "mean_validation_d_mse",
                 }
                 for field, expected_value in checks.items():
-                    if value.get(field) != expected_value:
+                    if not _type_strict_equal(value.get(field), expected_value):
                         raise ValueError(f"Frozen Stage 5 tuning {field} mismatch for {scenario}/{target}")
                 for metric in ("mean_validation_observed_mse", "mean_validation_truth_mse_diagnostic"):
                     _finite_number(value.get(metric), metric)
@@ -456,7 +476,7 @@ def validate_frozen_stage5_tuning(
                 rank_keys.append((loss, candidate_indices[candidate]))
             if rank_keys != sorted(rank_keys):
                 raise ValueError(f"Frozen Stage 5 tuning ranking order mismatch for {scenario}/{target}")
-            if not values or scenarios[scenario][target] != values[0]:
+            if not values or not _type_strict_equal(scenarios[scenario][target], values[0]):
                 raise ValueError(f"Frozen Stage 5 tuning winner mismatch for {scenario}/{target}")
     return frozen
 
