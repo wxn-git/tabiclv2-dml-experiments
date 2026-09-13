@@ -381,15 +381,15 @@ Expected: 180 unique successes, zero failures/OOM/fallback/non-finite/missing/du
 - [ ] **Step 4: Run full 10-replication tuning and freeze 12 winners**
 
 ```powershell
-python scripts/run_stage5_tuning.py --config configs/stage5_sensitivity.yaml --output results/stage5/tuning/full-records.jsonl --execution-profile full --num-shards 5 --shard-index 0
-python scripts/run_stage5_tuning.py --config configs/stage5_sensitivity.yaml --output results/stage5/tuning/full-records.jsonl --execution-profile full --num-shards 5 --shard-index 1
-python scripts/run_stage5_tuning.py --config configs/stage5_sensitivity.yaml --output results/stage5/tuning/full-records.jsonl --execution-profile full --num-shards 5 --shard-index 2
-python scripts/run_stage5_tuning.py --config configs/stage5_sensitivity.yaml --output results/stage5/tuning/full-records.jsonl --execution-profile full --num-shards 5 --shard-index 3
-python scripts/run_stage5_tuning.py --config configs/stage5_sensitivity.yaml --output results/stage5/tuning/full-records.jsonl --execution-profile full --num-shards 5 --shard-index 4
-python scripts/select_stage5_tuning.py --config configs/stage5_sensitivity.yaml --input results/stage5/tuning/full-records.jsonl --output results/stage5/tuning/frozen-full.json --execution-profile full
+python scripts/run_stage5_tuning.py --config configs/stage5_sensitivity.yaml --output results/stage5/tuning/full-records-part-0.jsonl --execution-profile full --num-shards 5 --shard-index 0
+python scripts/run_stage5_tuning.py --config configs/stage5_sensitivity.yaml --output results/stage5/tuning/full-records-part-1.jsonl --execution-profile full --num-shards 5 --shard-index 1
+python scripts/run_stage5_tuning.py --config configs/stage5_sensitivity.yaml --output results/stage5/tuning/full-records-part-2.jsonl --execution-profile full --num-shards 5 --shard-index 2
+python scripts/run_stage5_tuning.py --config configs/stage5_sensitivity.yaml --output results/stage5/tuning/full-records-part-3.jsonl --execution-profile full --num-shards 5 --shard-index 3
+python scripts/run_stage5_tuning.py --config configs/stage5_sensitivity.yaml --output results/stage5/tuning/full-records-part-4.jsonl --execution-profile full --num-shards 5 --shard-index 4
+python scripts/select_stage5_tuning.py --config configs/stage5_sensitivity.yaml --input-glob "results/stage5/tuning/full-records-part-*.jsonl" --output results/stage5/tuning/frozen-full.json --execution-profile full
 ```
 
-The five runners must be started as independent processes by the controller in actual execution; the commands above document the exact shards. Expected: 720 unique successful tuning records and 12 frozen winners, one for each DGP-target pair.
+The five runners must be started as independent processes by the controller in actual execution; each shard writes a separate JSONL file so concurrent processes never append to the same result store. The selector merges the five files, rejects duplicate or missing keys, and freezes the winners. Expected: 720 unique successful tuning records and 12 frozen winners, one for each DGP-target pair.
 
 - [ ] **Step 5: Run the 900-result full-settings preflight**
 
@@ -412,4 +412,3 @@ git commit -m "Document Stage 5 benchmark workflow"
 ```
 
 Report smoke and preflight gate evidence, measured elapsed time, projected formal elapsed time, GPU/CPU utilization observations, and estimated cost. Do not run `--profile formal` in this task.
-
