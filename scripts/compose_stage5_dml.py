@@ -82,6 +82,7 @@ def main() -> int:
     prepared = []
     expected_cache_paths = set()
     expected_metadata_paths = set()
+    encountered_failure = False
     try:
         for pair in pairs:
             results = []
@@ -102,37 +103,15 @@ def main() -> int:
             output_path = output_root / f"{pair.key}.json"
             skip = False
             if output_path.exists():
-                try:
-                    old = _existing(output_path)
-                except (ValueError, OSError, KeyError, TypeError):
-                    if not args.retry_failed:
-                        raise
-                    print(
-                        f"repairing invalid Stage 5 record: {output_path}",
-                        file=sys.stderr,
-                    )
-                    old = None
-                if old is not None:
-                    try:
-                        status = validate_stage5_resume_record(old, pair)
-                    except (ValueError, OSError, KeyError, TypeError):
-                        if not args.retry_failed or old.get("status") not in {
-                            "success", "fallback"
-                        }:
-                            raise
-                        print(
-                            f"repairing invalid Stage 5 record: {output_path}",
-                            file=sys.stderr,
-                        )
-                    else:
-                        if status == "success" or (
-                            status in {"failed", "oom"} and not args.retry_failed
-                        ):
-                            skip = True
-                        elif status == "fallback" and not args.retry_failed:
-                            raise ValueError(
-                                "Stage 5 existing result contains fallback"
-                            )
+                old = _existing(output_path)
+                status = validate_stage5_resume_record(old, pair)
+                if status == "success":
+                    skip = True
+                elif status in {"failed", "oom"} and not args.retry_failed:
+                    encountered_failure = True
+                    skip = True
+                elif status == "fallback" and not args.retry_failed:
+                    raise ValueError("Stage 5 existing result contains fallback")
             prepared.append((pair, results[0], results[1], skip))
         if set(cache_root.glob("*.npz")) != expected_cache_paths:
             raise ValueError("Stage 5 nuisance cache universe is not exact")
@@ -146,6 +125,8 @@ def main() -> int:
         )
         if unexpected_outputs:
             raise ValueError("Stage 5 result store contains unexpected task keys")
+        if encountered_failure:
+            raise ValueError("Stage 5 existing failed/OOM result was skipped")
     except (ValueError, OSError, KeyError, TypeError) as error:
         print(str(error), file=sys.stderr)
         return 1

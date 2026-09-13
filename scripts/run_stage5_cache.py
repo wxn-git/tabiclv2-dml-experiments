@@ -59,7 +59,7 @@ def main() -> int:
             resolved = resolve_stage5_method(pair, target, config, frozen)
             task = build_stage5_nuisance_spec(pair, target, resolved)
             request = (pair, task, resolved)
-            if task.key in requests:
+            if task.key in requests and requests[task.key] != request:
                 raise ValueError(f"Stage 5 nuisance task key collision: {task.key}")
             requests[task.key] = request
     failures = ResultStore(cache_root.parent / "failures")
