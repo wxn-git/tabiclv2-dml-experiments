@@ -1,14 +1,26 @@
 import json
 import subprocess
 import sys
+from dataclasses import asdict, replace
 from pathlib import Path
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
-from scripts import run_stage5_tuning, select_stage5_tuning
+from scripts import compose_stage5_dml, run_stage5_cache, run_stage5_tuning, select_stage5_tuning
 from tabdml.stage5_config import load_stage5_config, stage5_config_fingerprint
 from tabdml.stage5_tuning import derive_stage5_tuning_seeds, iter_stage5_tuning_tasks
 from tabdml.storage import ResultStore
+from tabdml.nuisance_cache import NuisanceCache
+from tabdml.stage5_experiment import (
+    Stage5NuisanceResult,
+    build_stage5_nuisance_spec,
+    compose_stage5_record,
+    iter_stage5_pairs,
+    resolve_stage5_method,
+    stage5_nuisance_metadata_path,
+)
 
 
 CONFIG = Path("configs/stage5_sensitivity.yaml")
@@ -36,6 +48,206 @@ def test_cli_modules_import_from_foreign_current_directory(tmp_path):
     code = "import runpy; runpy.run_path(r'%s', run_name='stage5_import_test')" % (root / "scripts" / "run_stage5_tuning.py")
     result = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("script", ["run_stage5_cache.py", "compose_stage5_dml.py"])
+def test_experiment_cli_modules_import_from_foreign_current_directory(tmp_path, script):
+    root = Path(__file__).resolve().parents[1]
+    code = "import runpy; runpy.run_path(r'%s', run_name='stage5_import_test')" % (root / "scripts" / script)
+    result = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_cache_cli_rejects_sharded_gpu_before_loading_files(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["run_stage5_cache.py", "--device-group", "gpu", "--num-shards", "2", "--shard-index", "0"])
+    with pytest.raises(ValueError, match="unsharded"):
+        run_stage5_cache.main()
+
+
+def test_composition_cli_returns_nonzero_for_incomplete_cache(monkeypatch, tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    config = load_stage5_config(CONFIG)
+    from tests.test_stage5_experiment import _frozen
+
+    frozen_path = tmp_path / "frozen.json"
+    frozen_path.write_text(json.dumps(_frozen(config)), encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "compose_stage5_dml.py", "--config", str(CONFIG.resolve()), "--profile", "smoke",
+            "--frozen-tuning", str(frozen_path), "--cache-root", str(tmp_path / "empty"),
+            "--output", str(tmp_path / "out"),
+        ],
+    )
+    assert compose_stage5_dml.main() != 0
+
+
+def _compose_cli_fixture(monkeypatch, tmp_path, retry_failed=False):
+    from tests.test_stage5_experiment import _frozen
+
+    config = load_stage5_config(CONFIG)
+    frozen = _frozen(config)
+    pair = next(
+        p for p in iter_stage5_pairs(config, frozen, "smoke") if p.method == "lasso"
+    )
+    cache_root = tmp_path / "cache"
+    output_root = tmp_path / "output"
+    nuisance = Stage5NuisanceResult(
+        np.zeros(pair.n), (0.0,) * pair.folds_count, None, None,
+        0.5, 0.75, "cpu", "cpu",
+    )
+    for target in ("l", "m"):
+        resolved = resolve_stage5_method(pair, target, config, frozen)
+        task = build_stage5_nuisance_spec(pair, target, resolved)
+        cache = NuisanceCache(cache_root)
+        cache.path(task).touch()
+        stage5_nuisance_metadata_path(cache, task).touch()
+    monkeypatch.setattr(compose_stage5_dml, "load_stage5_config", lambda path: config)
+    monkeypatch.setattr(compose_stage5_dml, "load_stage5_tuning", lambda *a: frozen)
+    monkeypatch.setattr(compose_stage5_dml, "iter_stage5_pairs", lambda *a: iter((pair,)))
+    monkeypatch.setattr(compose_stage5_dml, "read_stage5_nuisance", lambda *a, **k: nuisance)
+    monkeypatch.setattr(
+        compose_stage5_dml,
+        "parse_args",
+        lambda: SimpleNamespace(
+            config=str(CONFIG), profile="smoke", frozen_tuning="frozen.json",
+            cache_root=str(cache_root), output=str(output_root),
+            retry_failed=retry_failed,
+        ),
+    )
+    return pair, nuisance, output_root
+
+
+@pytest.mark.parametrize("status", ["failed", "oom"])
+def test_composition_resume_reports_matching_failure_unless_retrying(
+    monkeypatch, tmp_path, status
+):
+    pair, nuisance, output_root = _compose_cli_fixture(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "tabdml.stage5_experiment.simulate_plr",
+        lambda *a, **k: SimpleNamespace(
+            y=np.linspace(0.0, 2.0, pair.n), d=np.linspace(-1.0, 1.0, pair.n),
+            l0=np.zeros(pair.n), m0=np.zeros(pair.n),
+        ),
+    )
+    record = compose_stage5_record(pair, nuisance, nuisance)
+    record["status"] = status
+    ResultStore(output_root).write(record)
+    assert compose_stage5_dml.main() == 1
+    assert json.loads((output_root / f"{pair.key}.json").read_text())["status"] == status
+
+    monkeypatch.setattr(compose_stage5_dml, "parse_args", lambda: SimpleNamespace(
+        config=str(CONFIG), profile="smoke", frozen_tuning="frozen.json",
+        cache_root=str(tmp_path / "cache"), output=str(output_root), retry_failed=True,
+    ))
+    assert compose_stage5_dml.main() == 0
+    assert json.loads((output_root / f"{pair.key}.json").read_text())["status"] == "success"
+
+
+def test_composition_retry_rejects_corrupt_record_and_reports_diagnostics(
+    monkeypatch, tmp_path, capsys
+):
+    pair, nuisance, output_root = _compose_cli_fixture(monkeypatch, tmp_path)
+    output_root.mkdir(parents=True)
+    path = output_root / f"{pair.key}.json"
+    path.write_text("not json", encoding="utf-8")
+    assert compose_stage5_dml.main() == 1
+    assert "Invalid existing Stage 5 record" in capsys.readouterr().err
+
+    monkeypatch.setattr(compose_stage5_dml, "parse_args", lambda: SimpleNamespace(
+        config=str(CONFIG), profile="smoke", frozen_tuning="frozen.json",
+        cache_root=str(tmp_path / "cache"), output=str(output_root), retry_failed=True,
+    ))
+    assert compose_stage5_dml.main() == 1
+
+
+def test_composition_unknown_status_fails_even_with_retry(monkeypatch, tmp_path):
+    pair, _, output_root = _compose_cli_fixture(monkeypatch, tmp_path, retry_failed=True)
+    output_root.mkdir(parents=True)
+    (output_root / f"{pair.key}.json").write_text(
+        json.dumps({"task_key": pair.key, "status": "mystery"}), encoding="utf-8"
+    )
+    assert compose_stage5_dml.main() == 1
+
+
+@pytest.mark.parametrize("status", ["failed", "oom"])
+def test_cache_cli_reports_matching_failure_unless_retrying(
+    monkeypatch, tmp_path, status
+):
+    from tests.test_stage5_experiment import _frozen
+
+    config = load_stage5_config(CONFIG)
+    frozen = _frozen(config)
+    pair = next(
+        p for p in iter_stage5_pairs(config, frozen, "smoke") if p.method == "lasso"
+    )
+    resolved = resolve_stage5_method(pair, "l", config, frozen)
+    task = build_stage5_nuisance_spec(pair, "l", resolved)
+    cache_root = tmp_path / "cache"
+    failure = {
+        "task_key": task.key, "status": status, "error_type": "RuntimeError",
+        "error_message": "boom", "traceback": "trace", "pair_key": pair.key,
+        "profile": pair.profile, "config_fingerprint": pair.config_fingerprint,
+        "tuning_fingerprint": pair.tuning_fingerprint, "task": asdict(task),
+    }
+    ResultStore(cache_root.parent / "failures").write(failure)
+    calls = []
+    monkeypatch.setattr(run_stage5_cache, "load_stage5_config", lambda path: config)
+    monkeypatch.setattr(run_stage5_cache, "load_stage5_tuning", lambda *a: frozen)
+    monkeypatch.setattr(run_stage5_cache, "resolve_stage5_profile", lambda *a: SimpleNamespace(full_settings=False))
+    monkeypatch.setattr(run_stage5_cache, "iter_stage5_pairs", lambda *a: iter((pair,)))
+    monkeypatch.setattr(run_stage5_cache, "methods_for_device", lambda group: (pair.method,))
+    monkeypatch.setattr(run_stage5_cache, "resolve_stage5_method", lambda *a: resolved)
+    monkeypatch.setattr(run_stage5_cache, "build_stage5_nuisance_spec", lambda *a: task)
+    monkeypatch.setattr(run_stage5_cache, "fit_stage5_nuisance", lambda *a, **k: (
+        calls.append(k), Stage5NuisanceResult(np.zeros(pair.n), (0.0,) * 5, None, None, 0.0, 0.0, "cpu", "cpu")
+    )[1])
+    args = dict(config=str(CONFIG), profile="smoke", frozen_tuning="frozen.json",
+                cache_root=str(cache_root), device_group="cpu", num_shards=1,
+                shard_index=0, retry_failed=False)
+    monkeypatch.setattr(run_stage5_cache, "parse_args", lambda: SimpleNamespace(**args))
+    assert run_stage5_cache.main() == 1
+    assert calls == []
+
+    args["retry_failed"] = True
+    assert run_stage5_cache.main() == 0
+    assert len(calls) == 1
+    assert not (cache_root.parent / "failures" / f"{task.key}.json").exists()
+
+
+def test_cache_cli_rejects_unknown_failure_status_and_key_collisions(monkeypatch, tmp_path):
+    from tests.test_stage5_experiment import _frozen
+
+    config = load_stage5_config(CONFIG)
+    frozen = _frozen(config)
+    pair = next(iter_stage5_pairs(config, frozen, "smoke"))
+    other = replace(pair, method=config["methods"][1])
+    resolved = resolve_stage5_method(pair, "l", config, frozen)
+    task = build_stage5_nuisance_spec(pair, "l", resolved)
+    cache_root = tmp_path / "cache"
+    ResultStore(cache_root.parent / "failures").write({
+        "task_key": task.key, "status": "mystery"
+    })
+    monkeypatch.setattr(run_stage5_cache, "load_stage5_config", lambda path: config)
+    monkeypatch.setattr(run_stage5_cache, "load_stage5_tuning", lambda *a: frozen)
+    monkeypatch.setattr(run_stage5_cache, "resolve_stage5_profile", lambda *a: SimpleNamespace(full_settings=False))
+    monkeypatch.setattr(run_stage5_cache, "methods_for_device", lambda group: (pair.method, other.method))
+    monkeypatch.setattr(run_stage5_cache, "iter_stage5_pairs", lambda *a: iter((pair,)))
+    monkeypatch.setattr(run_stage5_cache, "resolve_stage5_method", lambda *a: resolved)
+    monkeypatch.setattr(run_stage5_cache, "build_stage5_nuisance_spec", lambda *a: task)
+    monkeypatch.setattr(run_stage5_cache, "parse_args", lambda: SimpleNamespace(
+        config=str(CONFIG), profile="smoke", frozen_tuning="frozen.json",
+        cache_root=str(cache_root), device_group="cpu", num_shards=1,
+        shard_index=0, retry_failed=True,
+    ))
+    with pytest.raises(ValueError, match="status"):
+        run_stage5_cache.main()
+
+    (cache_root.parent / "failures" / f"{task.key}.json").unlink()
+    monkeypatch.setattr(run_stage5_cache, "iter_stage5_pairs", lambda *a: iter((pair, other)))
+    with pytest.raises(ValueError, match="collision"):
+        run_stage5_cache.main()
 
 
 def test_runner_resolves_paths_from_repo_root_and_uses_sharded_result_store(monkeypatch, tmp_path):
