@@ -6,9 +6,12 @@ import pytest
 
 from tabdml.figures import (
     make_accuracy_cost_figure,
+    make_stage5_sensitivity_figures,
     make_treatment_effect_p_trend_figure,
     prepare_treatment_effect_p_trend_data,
 )
+from test_stage5_analysis import records
+from tabdml.stage5_analysis import summarize_stage5
 
 
 def test_accuracy_cost_figure_renders_without_gui(tmp_path):
@@ -204,3 +207,16 @@ def test_exploratory_p_mse_script_generates_all_outputs(tmp_path):
     assert (output_dir / "treatment_effect_mse_by_p_exploratory.png").exists()
     assert (output_dir / "treatment_effect_mse_by_p_exploratory.pdf").exists()
     assert (output_dir / "treatment_effect_mse_by_p_exploratory_data.csv").exists()
+
+
+def test_stage5_figures_export_two_primary_and_four_supplements(tmp_path):
+    summary = summarize_stage5(records(), bootstrap_resamples=200)
+    outputs = make_stage5_sensitivity_figures(summary, tmp_path)
+    assert {"fixed_n", "fixed_p", "bias", "coverage", "l_mse", "m_mse"} == set(outputs)
+    for group in outputs.values():
+        assert group["png"].exists() and group["png"].stat().st_size > 0
+        assert group["pdf"].exists() and group["pdf"].stat().st_size > 0
+    assert outputs["fixed_n"]["csv"].exists()
+    assert outputs["fixed_p"]["csv"].exists()
+    exported = pd.read_csv(outputs["fixed_n"]["csv"])
+    assert sorted(exported["p"].unique()) == [10, 50, 100]

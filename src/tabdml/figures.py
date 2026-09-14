@@ -8,8 +8,11 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
+import numpy as np
 import pandas as pd
 import seaborn as sns
+
+from .stage5_analysis import build_stage5_plot_data
 
 
 _P_TREND_METHOD_LABELS = {
@@ -273,3 +276,141 @@ def make_treatment_effect_p_trend_figure(
     fig.savefig(paths["pdf"], bbox_inches="tight", facecolor="white")
     plt.close(fig)
     return paths
+
+
+_STAGE5_SCENARIOS = (
+    ("linear", "Linear"), ("smooth", "Smooth"), ("tree", "Original tree"),
+    ("tree_stumps", "Tree stumps"),
+    ("tree_hierarchical", "Hierarchical tree"),
+    ("tree_forest_sum", "Forest-sum tree"),
+)
+_STAGE5_LABELS = {
+    "tabiclv2_1": "TabICLv2-1", "tabiclv2_8": "TabICLv2-8",
+    "xgboost_tuned": "Tuned XGBoost", "extra_trees": "Extra Trees",
+    "lasso": "Lasso", "ensemble": "Ensemble",
+}
+_STAGE5_STYLES = {
+    "tabiclv2_1": ("#D55E00", "o", "-"),
+    "tabiclv2_8": ("#CC79A7", "^", "--"),
+    "xgboost_tuned": ("#0072B2", "s", "-"),
+    "extra_trees": ("#009E73", "D", "-."),
+    "lasso": ("#E69F00", "v", ":"),
+    "ensemble": ("#6A3D9A", "P", "-"),
+}
+
+
+def _stage5_panel_figure(
+    data: pd.DataFrame, *, x: str, metric: str, lower: str | None,
+    upper: str | None, title: str, ylabel: str, output: Path, basename: str,
+    log_scale: bool = False,
+) -> dict[str, Path]:
+    paths = {"png": output / f"{basename}.png", "pdf": output / f"{basename}.pdf"}
+    sns.set_theme(style="whitegrid", context="paper")
+    fig, axes = plt.subplots(2, 3, figsize=(13.4, 7.5), sharey=False)
+    handles = {}
+    for index, (axis, (scenario, panel_title)) in enumerate(zip(axes.flat, _STAGE5_SCENARIOS, strict=True)):
+        panel = data.loc[data["scenario"].eq(scenario)]
+        if panel.empty:
+            raise ValueError(f"Missing Stage 5 panel: {scenario}")
+        for method in _STAGE5_LABELS:
+            series = panel.loc[panel["method"].eq(method)].sort_values(x)
+            if series.empty:
+                raise ValueError(f"Missing Stage 5 method {method} in {scenario}")
+            color, marker, linestyle = _STAGE5_STYLES[method]
+            xvalues = series[x].to_numpy(dtype=float)
+            yvalues = series[metric].to_numpy(dtype=float)
+            if not np.isfinite(yvalues).all():
+                raise ValueError("Stage 5 plotting values must be finite")
+            (line,) = axis.plot(xvalues, yvalues, color=color, marker=marker,
+                                linestyle=linestyle, linewidth=1.6, markersize=5,
+                                label=_STAGE5_LABELS[method])
+            handles.setdefault(method, line)
+            if lower and upper:
+                lo = series[lower].to_numpy(dtype=float)
+                hi = series[upper].to_numpy(dtype=float)
+                axis.fill_between(xvalues, lo, hi, color=color, alpha=0.12, linewidth=0)
+        axis.set_title(f"({chr(97 + index)}) {panel_title}")
+        axis.set_xlabel("Feature dimension p" if x == "p" else "Sample size n")
+        axis.set_xticks(sorted(panel[x].unique()))
+        if log_scale:
+            axis.set_yscale("log")
+            axis.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.4g}"))
+        axis.grid(True, which="both", linewidth=0.5, alpha=0.55)
+    axes[0, 0].set_ylabel(ylabel)
+    axes[1, 0].set_ylabel(ylabel)
+    fig.legend([handles[m] for m in _STAGE5_LABELS], list(_STAGE5_LABELS.values()),
+               loc="lower center", ncol=6, frameon=False, bbox_to_anchor=(0.5, 0.01))
+    fig.suptitle(title, fontsize=15, y=0.99)
+    fig.subplots_adjust(left=0.075, right=0.99, top=0.91, bottom=0.13, wspace=0.26, hspace=0.34)
+    fig.savefig(paths["png"], dpi=300, bbox_inches="tight", facecolor="white")
+    fig.savefig(paths["pdf"], bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return paths
+
+
+def make_stage5_sensitivity_figures(summary: pd.DataFrame, output_dir: str | Path) -> dict[str, dict[str, Path]]:
+    """Export two primary MSE figures and four two-sweep supplements."""
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    fixed_n, fixed_p = build_stage5_plot_data(summary)
+    if (fixed_n["treatment_mse"] <= 0).any() or (fixed_p["treatment_mse"] <= 0).any():
+        raise ValueError("Treatment-effect MSE must be positive for a logarithmic axis")
+    fixed_n_path = output / "treatment_effect_mse_fixed_n_data.csv"
+    fixed_p_path = output / "treatment_effect_mse_fixed_p_data.csv"
+    fixed_n.to_csv(fixed_n_path, index=False)
+    fixed_p.to_csv(fixed_p_path, index=False)
+    outputs = {
+        "fixed_n": _stage5_panel_figure(
+            fixed_n, x="p", metric="treatment_mse", lower="mse_ci_lower", upper="mse_ci_upper",
+            title="Treatment-effect MSE at fixed sample size (n=1000)",
+            ylabel="Treatment-effect MSE (log scale)", output=output,
+            basename="treatment_effect_mse_fixed_n", log_scale=True,
+        ),
+        "fixed_p": _stage5_panel_figure(
+            fixed_p, x="n", metric="treatment_mse", lower="mse_ci_lower", upper="mse_ci_upper",
+            title="Treatment-effect MSE at fixed feature dimension (p=50)",
+            ylabel="Treatment-effect MSE (log scale)", output=output,
+            basename="treatment_effect_mse_fixed_p", log_scale=True,
+        ),
+    }
+    outputs["fixed_n"]["csv"] = fixed_n_path
+    outputs["fixed_p"]["csv"] = fixed_p_path
+
+    metric_labels = {
+        "bias": "Bias", "coverage": "95% CI coverage",
+        "l_mse": "Outcome nuisance MSE", "m_mse": "Treatment nuisance MSE",
+    }
+    # Each supplement is a 2x6 figure: top row fixed n, bottom row fixed p.
+    for metric, label in metric_labels.items():
+        basename = f"stage5_{metric}_supplement"
+        paths = {"png": output / f"{basename}.png", "pdf": output / f"{basename}.pdf"}
+        fig, axes = plt.subplots(2, 6, figsize=(19, 6.5), sharey="row")
+        handles = {}
+        for row, (sweep, x, xlabel) in enumerate((("fixed_n", "p", "p"), ("fixed_p", "n", "n"))):
+            source = fixed_n if row == 0 else fixed_p
+            for col, (scenario, panel_title) in enumerate(_STAGE5_SCENARIOS):
+                axis = axes[row, col]
+                panel = source.loc[source["scenario"].eq(scenario)]
+                for method in _STAGE5_LABELS:
+                    series = panel.loc[panel["method"].eq(method)].sort_values(x)
+                    color, marker, linestyle = _STAGE5_STYLES[method]
+                    (line,) = axis.plot(series[x], series[metric], color=color, marker=marker,
+                                       linestyle=linestyle, linewidth=1.3, markersize=4)
+                    handles.setdefault(method, line)
+                axis.set_title(panel_title if row == 0 else "")
+                axis.set_xlabel(xlabel)
+                axis.set_xticks(sorted(panel[x].unique()))
+                if metric in {"l_mse", "m_mse"} and (panel[metric] > 0).all():
+                    axis.set_yscale("log")
+                    axis.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.4g}"))
+                if col == 0:
+                    axis.set_ylabel(f"{label}\n{'fixed n=1000' if row == 0 else 'fixed p=50'}")
+        fig.legend([handles[m] for m in _STAGE5_LABELS], list(_STAGE5_LABELS.values()),
+                   loc="lower center", ncol=6, frameon=False)
+        fig.suptitle(f"Stage 5 {label}", fontsize=14)
+        fig.subplots_adjust(left=0.055, right=0.995, top=0.88, bottom=0.16, wspace=0.25, hspace=0.35)
+        fig.savefig(paths["png"], dpi=300, bbox_inches="tight", facecolor="white")
+        fig.savefig(paths["pdf"], bbox_inches="tight", facecolor="white")
+        plt.close(fig)
+        outputs[metric] = paths
+    return outputs
