@@ -2,6 +2,7 @@ import subprocess
 import sys
 
 import pandas as pd
+from matplotlib.figure import Figure
 import pytest
 
 from tabdml.figures import (
@@ -209,14 +210,47 @@ def test_exploratory_p_mse_script_generates_all_outputs(tmp_path):
     assert (output_dir / "treatment_effect_mse_by_p_exploratory_data.csv").exists()
 
 
-def test_stage5_figures_export_two_primary_and_four_supplements(tmp_path):
+def test_stage5_figures_export_mse_and_coverage_primaries_plus_supplements(tmp_path):
     summary = summarize_stage5(records(), bootstrap_resamples=200)
     outputs = make_stage5_sensitivity_figures(summary, tmp_path)
-    assert {"fixed_n", "fixed_p", "bias", "coverage", "l_mse", "m_mse"} == set(outputs)
+    assert {
+        "fixed_n", "fixed_p", "coverage_fixed_n", "coverage_fixed_p",
+        "bias", "coverage", "l_mse", "m_mse",
+    } == set(outputs)
     for group in outputs.values():
         assert group["png"].exists() and group["png"].stat().st_size > 0
         assert group["pdf"].exists() and group["pdf"].stat().st_size > 0
     assert outputs["fixed_n"]["csv"].exists()
     assert outputs["fixed_p"]["csv"].exists()
+    assert outputs["coverage_fixed_n"]["csv"] == outputs["fixed_n"]["csv"]
+    assert outputs["coverage_fixed_p"]["csv"] == outputs["fixed_p"]["csv"]
     exported = pd.read_csv(outputs["fixed_n"]["csv"])
     assert sorted(exported["p"].unique()) == [10, 50, 100]
+
+
+def test_stage5_five_method_figures_exclude_ensemble(tmp_path):
+    summary = summarize_stage5(
+        records().loc[lambda frame: ~frame["method"].eq("ensemble")],
+        bootstrap_resamples=100,
+    )
+    outputs = make_stage5_sensitivity_figures(summary, tmp_path)
+    exported = pd.read_csv(outputs["fixed_n"]["csv"])
+    assert set(exported["method"]) == {
+        "tabiclv2_1", "tabiclv2_8", "xgboost_tuned", "extra_trees", "lasso"
+    }
+
+
+def test_stage5_coverage_primary_legend_labels_nominal_reference(monkeypatch, tmp_path):
+    labels = []
+    original = Figure.legend
+
+    def capture(self, *args, **kwargs):
+        if len(args) > 1:
+            labels.extend(args[1])
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "legend", capture)
+    make_stage5_sensitivity_figures(
+        summarize_stage5(records(), bootstrap_resamples=100), tmp_path
+    )
+    assert "Nominal 95%" in labels

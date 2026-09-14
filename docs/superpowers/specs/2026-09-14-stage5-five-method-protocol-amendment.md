@@ -12,6 +12,20 @@ Stage 5 permanently removes `ensemble`. The confirmatory comparison contains exa
 
 Stage 1--4 configurations, code, and results remain unchanged. MLP is not added in this amendment; it may be studied later as a separately designed supplementary baseline.
 
+## DGP and random-seed relationship to Stage 2
+
+The `linear`, `smooth`, and original `tree` panels continue to use the exact
+same `simulate_plr` formulas as Stage 2. The three additional tree panels have
+no Stage 2 counterpart. Stage 5 intentionally uses its own profile-specific
+seed namespace, so overlapping Stage 2 and Stage 5 cells are independent draws
+from the same DGP rather than the same realized sample. Within every Stage 5
+cell and replication, all methods share identical data and fold seeds.
+
+Seeds must not be changed after inspecting preflight curves. The five-replicate
+preflight is a correctness and runtime gate only; non-monotone finite-sample
+curves are not publication evidence and are reassessed with 100 formal
+replications.
+
 ## Scientific rationale
 
 The paper asks whether TabICLv2 improves PLR-DML nuisance estimation and treatment-effect inference relative to conventional learners. Tuned XGBoost is the principal nonlinear tree baseline, Extra Trees is a randomized tree baseline, and Lasso is the linear baseline. These methods provide the required comparison without the current ensemble's nested DML cross-fitting, ensemble OOF cross-validation, and internal model searches. The ensemble is computationally disproportionate and is not required to answer the primary question.
@@ -66,7 +80,12 @@ results/stage5_five/preflight/raw
 results/stage5_five/preflight/analysis
 ```
 
-Primary figures retain the two six-panel layouts. Legends contain exactly five methods. Supplementary Bias, Coverage, `l`-MSE, and `m`-MSE figures also contain exactly five methods. Documentation must state that the prior six-method smoke was an implementation check and is not part of the final confirmatory protocol.
+Primary treatment-effect MSE and coverage figures each retain separate fixed-`n`
+and fixed-`p` six-panel layouts. Coverage figures mark the nominal 0.95 level.
+Legends contain exactly five methods. Supplementary Bias, Coverage, `l`-MSE,
+and `m`-MSE figures also contain exactly five methods. Documentation must state
+that the prior six-method smoke was an implementation check and is not part of
+the final confirmatory protocol.
 
 ## Verification and stopping rule
 

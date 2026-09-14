@@ -5,6 +5,11 @@ import json
 import os
 from pathlib import Path
 
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_MPL_CACHE = _PROJECT_ROOT / "results" / ".matplotlib"
+_MPL_CACHE.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("MPLCONFIGDIR", str(_MPL_CACHE))
+
 from tabdml.figures import make_stage5_sensitivity_figures
 from tabdml.stage5_analysis import (
     build_stage5_plot_data,
@@ -22,7 +27,7 @@ from tabdml.stage5_config import (
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Analyze and plot Stage 5 results")
-    parser.add_argument("--config", default="configs/stage5_sensitivity.yaml")
+    parser.add_argument("--config", default="configs/stage5_sensitivity_five.yaml")
     parser.add_argument("--profile", choices=("smoke", "preflight", "formal"), required=True)
     parser.add_argument("--input", required=True, help="ResultStore directory or JSONL file")
     parser.add_argument("--output-root", required=True)
@@ -43,7 +48,7 @@ def _write_json(path: Path, value) -> None:
 
 def main() -> int:
     args = parse_args()
-    root = Path(__file__).resolve().parents[1]
+    root = _PROJECT_ROOT
     config_path = Path(args.config)
     config_path = config_path if config_path.is_absolute() else root / config_path
     input_path = Path(args.input)

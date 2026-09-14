@@ -35,6 +35,62 @@ def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
     os.replace(temporary, path)
 
 
+def _assert_disjoint_paths(source: str | Path, destination: str | Path) -> None:
+    source_path = Path(source).resolve()
+    destination_path = Path(destination).resolve()
+    if (
+        source_path == destination_path
+        or source_path in destination_path.parents
+        or destination_path in source_path.parents
+    ):
+        raise ValueError("Stage 5 migration source and destination must be disjoint")
+
+
+def _assert_migration_paths(
+    source_tuning: str | Path,
+    source_cache: str | Path,
+    destination_tuning: str | Path,
+    destination_cache: str | Path,
+    manifest: str | Path,
+) -> None:
+    sources = (source_tuning, source_cache)
+    outputs = (destination_tuning, destination_cache, manifest)
+    for source in sources:
+        for output in outputs:
+            _assert_disjoint_paths(source, output)
+    for index, output in enumerate(outputs):
+        for other in outputs[index + 1:]:
+            _assert_disjoint_paths(output, other)
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _snapshot_tree(root: str | Path) -> dict[str, Any]:
+    root_path = Path(root).resolve()
+    if not root_path.is_dir():
+        raise FileNotFoundError(f"Stage 5 migration source cache is missing: {root_path}")
+    files = [
+        {
+            "path": path.relative_to(root_path).as_posix(),
+            "size": path.stat().st_size,
+            "sha256": _file_sha256(path),
+        }
+        for path in sorted(value for value in root_path.rglob("*") if value.is_file())
+    ]
+    canonical = json.dumps(files, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {
+        "file_count": len(files),
+        "tree_sha256": hashlib.sha256(canonical).hexdigest(),
+        "files": files,
+    }
+
+
 def _without_methods(config: Mapping[str, Any]) -> dict[str, Any]:
     value = copy.deepcopy(dict(config))
     value.pop("methods", None)
@@ -91,6 +147,12 @@ def migrate_stage5_cache(
         "tabiclv2_1", "tabiclv2_8", "xgboost_tuned", "extra_trees", "lasso"
     ):
         raise ValueError("Destination must be the exact five-method protocol")
+    _assert_migration_paths(
+        source_tuning_path, source_cache_root, destination_tuning_path,
+        destination_cache_root, manifest_path,
+    )
+    source_cache = Path(source_cache_root)
+    source_snapshot_before = _snapshot_tree(source_cache)
     source_tuning = load_stage5_tuning(source_tuning_path, source_config, "full")
     destination_tuning = rebind_stage5_tuning(
         source_config, destination_config, source_tuning_path,
@@ -103,7 +165,6 @@ def migrate_stage5_cache(
     expected = 30 * 5 * len(destination_config["methods"]) * 2
     if len(new) != expected:
         raise ValueError(f"Migration requires exactly {expected} nuisance tasks")
-    source_cache = Path(source_cache_root)
     destination_cache = NuisanceCache(destination_cache_root)
     entries = []
     counts = Counter()
@@ -176,6 +237,9 @@ def migrate_stage5_cache(
         raise ValueError("Migrated NPZ universe is not exact")
     if set(destination_cache.root.glob("stage5-meta-*.json")) != expected_meta:
         raise ValueError("Migrated metadata universe is not exact")
+    source_snapshot_after = _snapshot_tree(source_cache)
+    if source_snapshot_after != source_snapshot_before:
+        raise ValueError("Stage 5 migration source cache changed during migration")
     manifest = {
         "schema_version": "stage5_cache_migration_v1", "profile": profile,
         "source_config_fingerprint": stage5_config_fingerprint(source_config),
@@ -184,8 +248,9 @@ def migrate_stage5_cache(
         "destination_tuning_fingerprint": destination_tuning["tuning_run_fingerprint"],
         "expected_caches": expected, "migrated_caches": len(entries),
         "per_method": dict(sorted(counts.items())), "violations": 0,
-        "source_cache_unchanged": True, "entries": entries,
+        "source_cache_unchanged": True,
+        "source_cache_snapshot": source_snapshot_after,
+        "entries": entries,
     }
     _atomic_json(Path(manifest_path), manifest)
     return manifest
-

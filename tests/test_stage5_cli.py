@@ -1,4 +1,5 @@
 import json
+import inspect
 import subprocess
 import sys
 from dataclasses import asdict, replace
@@ -8,7 +9,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from scripts import compose_stage5_dml, run_stage5_cache, run_stage5_tuning, select_stage5_tuning
+from scripts import (
+    analyze_stage5, compose_stage5_dml, run_stage5_cache, run_stage5_parallel,
+    run_stage5_tuning, select_stage5_tuning,
+)
 from tabdml.stage5_config import load_stage5_config, stage5_config_fingerprint
 from tabdml.stage5_tuning import derive_stage5_tuning_seeds, iter_stage5_tuning_tasks
 from tabdml.storage import ResultStore
@@ -24,6 +28,47 @@ from tabdml.stage5_experiment import (
 
 
 CONFIG = Path("configs/stage5_sensitivity.yaml")
+FIVE_METHOD_CONFIG = "configs/stage5_sensitivity_five.yaml"
+
+
+@pytest.mark.parametrize(
+    ("module", "arguments"),
+    [
+        (run_stage5_parallel, ["--profile", "smoke", "--frozen-tuning", "f", "--cache-root", "c", "--output-root", "o", "--log-dir", "l"]),
+        (analyze_stage5, ["--profile", "smoke", "--input", "i", "--output-root", "o"]),
+        (run_stage5_cache, ["--device-group", "cpu"]),
+        (compose_stage5_dml, ["--profile", "smoke", "--frozen-tuning", "f", "--cache-root", "c", "--output", "o"]),
+        (run_stage5_tuning, []),
+        (select_stage5_tuning, []),
+    ],
+)
+def test_stage5_clis_default_to_five_method_protocol(monkeypatch, module, arguments):
+    monkeypatch.setattr(sys, "argv", [module.__name__, *arguments])
+    assert module.parse_args().config == FIVE_METHOD_CONFIG
+
+
+def test_stage5_controller_api_defaults_to_five_method_protocol():
+    parameters = inspect.signature(run_stage5_parallel.run_stage5_parallel).parameters
+    assert parameters["config_path"].default == FIVE_METHOD_CONFIG
+    assert parameters["frozen_tuning"].default == "results/stage5_five/tuning/frozen-fast.json"
+    assert parameters["cache_root"].default == "results/stage5_five/smoke/cache"
+    assert parameters["output_root"].default == "results/stage5_five/smoke/raw"
+    assert parameters["log_dir"].default == "results/stage5_five/smoke/log"
+
+
+def test_stage5_worker_defaults_keep_five_method_artifacts_separate(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["run_stage5_cache.py", "--device-group", "cpu"])
+    cache = run_stage5_cache.parse_args()
+    assert cache.frozen_tuning == "results/stage5_five/tuning/frozen-fast.json"
+    assert cache.cache_root == "results/stage5_five/smoke/cache"
+
+    monkeypatch.setattr(sys, "argv", ["run_stage5_tuning.py"])
+    assert run_stage5_tuning.parse_args().output_root == "results/stage5_five/tuning/raw"
+
+    monkeypatch.setattr(sys, "argv", ["select_stage5_tuning.py"])
+    assert select_stage5_tuning.parse_args().output == (
+        "results/stage5_five/tuning/selected_xgboost.json"
+    )
 
 
 def _record(task):

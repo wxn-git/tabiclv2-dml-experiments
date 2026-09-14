@@ -137,19 +137,25 @@ def estimate_formal_runtime(
     method_runtime = success.assign(runtime_seconds=runtime).groupby("method")["runtime_seconds"].sum()
     gpu = factor * float(method_runtime.reindex(["tabiclv2_1", "tabiclv2_8"], fill_value=0).sum())
     cpu = factor * float(method_runtime.reindex(["xgboost_tuned", "extra_trees", "lasso"], fill_value=0).sum()) / cpu_workers
+    has_ensemble = "ensemble" in method_runtime.index
     ensemble = factor * float(method_runtime.get("ensemble", 0.0)) / ensemble_workers
     core = max(gpu, cpu) + ensemble
     projected = core * (1.0 + overhead_fraction)
-    return {
+    result = {
         "gpu_lane_seconds": gpu, "standard_cpu_lane_seconds": cpu,
-        "ensemble_lane_seconds": ensemble,
         "composition_analysis_overhead_seconds": projected - core,
         "projected_elapsed_seconds": projected,
         "preflight_replications": int(reps), "formal_replications": formal_replications,
-        "cpu_workers": cpu_workers, "ensemble_workers": ensemble_workers,
+        "cpu_workers": cpu_workers,
         "hardware_dependent": True,
         "note": "Projection is hardware- and implementation-dependent.",
     }
+    if has_ensemble:
+        result.update({
+            "ensemble_lane_seconds": ensemble,
+            "ensemble_workers": ensemble_workers,
+        })
+    return result
 
 
 def load_stage5_records(path: str | Path) -> pd.DataFrame:

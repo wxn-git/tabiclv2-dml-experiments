@@ -24,7 +24,7 @@ from tabdml.storage import ResultStore
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="configs/stage5_sensitivity.yaml")
+    parser.add_argument("--config", default="configs/stage5_sensitivity_five.yaml")
     parser.add_argument("--profile", choices=("smoke", "preflight", "formal"), required=True)
     parser.add_argument("--frozen-tuning", required=True)
     parser.add_argument("--cache-root", required=True)

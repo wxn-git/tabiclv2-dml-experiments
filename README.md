@@ -111,3 +111,23 @@ Windows 使用短根目录，例如 `results/s4s0905/{tr,sr,cr,cache,an}`，避�
 六项主要比较的预声明规则要求同时满足：RMSE 至少改善 10%、六项比较的 Holm 校正 `p < 0.05`、TabICLv2 coverage 不比 tuned-XGBoost 低超过 0.05、TabICLv2 coverage 至少为 0.90，以及结果完整。TabICLv2-1 在 5/6 个配置中取得方向性 RMSE 改善，改善幅度为 5.07%–19.25%；其中 3/6 达到 10% 的效应量门槛，但 `0/6` 通过全部规则。最接近通过的是标准面板的 `tree_hierarchical`：RMSE 改善 19.25%，未校正配对 `p=0.0083`，但 Holm `p=0.0501` 且 coverage 为 0.89。
 
 这意味着 Stage 4 的正确结论是“存在值得继续研究的方向性信号，但确认性证据不足”，而不是“TabICLv2 已在树状 DGP 上胜过 XGBoost”。完整数字、nuisance 诊断与结论边界见 [`RESULTS.md`](RESULTS.md#9-stage-4轴对齐树状-dgp-确认性基准)，冻结发布产物见 [`results/published/stage4_tree_benchmark/`](results/published/stage4_tree_benchmark/)。
+
+## Stage 5：五方法样本量与特征维度敏感性实验
+
+Stage 5 最终协议比较 `TabICLv2-1`、`TabICLv2-8`、Tuned XGBoost、Extra Trees 和 Lasso。原计划中的嵌套 ensemble 因计算量与研究问题不成比例而永久移除；Stage 1–4 不受影响。六个 DGP 各包含五个唯一单元：固定 `n=1000` 比较 `p=10,50,100`，固定 `p=50` 比较 `n=500,1000,2000`，中心 `(1000,50)` 只计算一次。
+
+精确规模为 smoke 150、preflight 750、formal 15,000 个 DML 结果。TabICLv2 由一个 GPU 工人顺序处理，三种传统方法使用 5–8 个 CPU 分片。正式运行必须在 750 条 preflight 全部成功、配对种子和中心去重检查通过并审核预计耗时后另行批准。
+
+本次 preflight 复用了旧六方法运行中已经完成的 1,500 个非 ensemble nuisance 缓存。复用不是简单复制：`migrate_stage5_cache.py` 验证旧新协议除方法集合外的所有计算字段，验证每个缓存的预测、折分、种子、模型参数和设备元数据，重新绑定五方法指纹，并输出逐任务 SHA-256 清单。旧缓存保持不变。
+
+```powershell
+python scripts/migrate_stage5_cache.py --source-config configs/stage5_sensitivity.yaml --destination-config configs/stage5_sensitivity_five.yaml --profile preflight --source-tuning results/stage5/tuning/frozen-full.json --destination-tuning results/stage5_five/tuning/frozen-full.json --source-cache results/stage5/preflight/cache --destination-cache results/stage5_five/preflight/cache --manifest results/stage5_five/preflight/migration_manifest.json --resume
+
+python scripts/run_stage5_parallel.py --config configs/stage5_sensitivity_five.yaml --profile preflight --frozen-tuning results/stage5_five/tuning/frozen-full.json --cache-root results/stage5_five/preflight/cache --output-root results/stage5_five/preflight/raw --log-dir results/stage5_five/preflight/log --cpu-workers 5
+
+python scripts/analyze_stage5.py --config configs/stage5_sensitivity_five.yaml --profile preflight --input results/stage5_five/preflight/raw --output-root results/stage5_five/preflight/analysis --bootstrap-resamples 10000 --cpu-workers 5
+```
+
+进度见 `results/stage5_five/preflight/log/progress.json`，门禁证据见 `analysis/gate_summary.json`，正式耗时估计见 `analysis/formal_runtime_projection.json`。处理效应 MSE 与覆盖率都分别提供固定 `n`、固定 `p` 的 PNG/PDF 主图，并导出精确绘图 CSV；覆盖率图以虚线标出名义值 0.95。5 次 preflight 只用于质量检查和趋势探索，论文最终结论仍需 100 次正式重复。
+
+Stage 5 的 `linear`、`smooth` 和原始 `tree` 与 Stage 2 共用 `src/tabdml/dgp.py` 中的同一套 DGP 公式；三个新增树结构在 Stage 2 中没有对应项。Stage 5 使用独立 seed namespace，但同一 `(scenario, n, p, replication)` 内所有方法严格共享数据种子和折叠种子。因此 Stage 5 是对相同 DGP 的独立复现实验，不是复用 Stage 2 的同一批随机样本。不同 `p` 的数据种子也彼此独立，preflight 仅 5 次重复时曲线可能因 Monte Carlo 波动暂时不单调，不能据此更换种子或形成论文结论。

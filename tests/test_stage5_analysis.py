@@ -71,3 +71,12 @@ def test_runtime_projection_separates_gpu_cpu_and_ensemble_lanes():
     assert projection["projected_elapsed_seconds"] >= projection["ensemble_lane_seconds"]
     assert projection["hardware_dependent"] is True
 
+
+def test_five_method_runtime_projection_omits_retired_ensemble_lane():
+    five_method_records = records().loc[lambda frame: ~frame["method"].eq("ensemble")]
+    projection = estimate_formal_runtime(
+        five_method_records, formal_replications=100, cpu_workers=5,
+        ensemble_workers=2,
+    )
+    assert "ensemble_lane_seconds" not in projection
+    assert "ensemble_workers" not in projection

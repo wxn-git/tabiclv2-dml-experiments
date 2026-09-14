@@ -22,10 +22,10 @@ def _project_path(value: str) -> Path:
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="configs/stage5_sensitivity.yaml")
+    parser.add_argument("--config", default="configs/stage5_sensitivity_five.yaml")
     parser.add_argument("--input-root", action="append", default=[])
     parser.add_argument("--input-glob", action="append", default=[])
-    parser.add_argument("--output", default="results/stage5_tuning/selected_xgboost.json")
+    parser.add_argument("--output", default="results/stage5_five/tuning/selected_xgboost.json")
     parser.add_argument("--execution-profile", choices=("full", "fast"), default="full")
     return parser.parse_args()
 

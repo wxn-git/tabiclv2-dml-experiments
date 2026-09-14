@@ -302,17 +302,21 @@ _STAGE5_STYLES = {
 def _stage5_panel_figure(
     data: pd.DataFrame, *, x: str, metric: str, lower: str | None,
     upper: str | None, title: str, ylabel: str, output: Path, basename: str,
-    log_scale: bool = False,
+    log_scale: bool = False, reference_y: float | None = None,
 ) -> dict[str, Path]:
     paths = {"png": output / f"{basename}.png", "pdf": output / f"{basename}.pdf"}
     sns.set_theme(style="whitegrid", context="paper")
     fig, axes = plt.subplots(2, 3, figsize=(13.4, 7.5), sharey=False)
     handles = {}
+    reference_handle = None
+    methods = [method for method in _STAGE5_LABELS if method in set(data["method"])]
+    if not methods or set(data["method"]) != set(methods):
+        raise ValueError("Stage 5 plotting data contains unknown methods")
     for index, (axis, (scenario, panel_title)) in enumerate(zip(axes.flat, _STAGE5_SCENARIOS, strict=True)):
         panel = data.loc[data["scenario"].eq(scenario)]
         if panel.empty:
             raise ValueError(f"Missing Stage 5 panel: {scenario}")
-        for method in _STAGE5_LABELS:
+        for method in methods:
             series = panel.loc[panel["method"].eq(method)].sort_values(x)
             if series.empty:
                 raise ValueError(f"Missing Stage 5 method {method} in {scenario}")
@@ -332,14 +336,25 @@ def _stage5_panel_figure(
         axis.set_title(f"({chr(97 + index)}) {panel_title}")
         axis.set_xlabel("Feature dimension p" if x == "p" else "Sample size n")
         axis.set_xticks(sorted(panel[x].unique()))
+        if reference_y is not None:
+            line = axis.axhline(reference_y, color="black", linestyle="--", linewidth=1.0,
+                               alpha=0.65, label="Nominal 95%")
+            if reference_handle is None:
+                reference_handle = line
+            axis.set_ylim(-0.03, 1.03)
         if log_scale:
             axis.set_yscale("log")
             axis.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.4g}"))
         axis.grid(True, which="both", linewidth=0.5, alpha=0.55)
     axes[0, 0].set_ylabel(ylabel)
     axes[1, 0].set_ylabel(ylabel)
-    fig.legend([handles[m] for m in _STAGE5_LABELS], list(_STAGE5_LABELS.values()),
-               loc="lower center", ncol=6, frameon=False, bbox_to_anchor=(0.5, 0.01))
+    legend_handles = [handles[m] for m in methods]
+    legend_labels = [_STAGE5_LABELS[m] for m in methods]
+    if reference_handle is not None:
+        legend_handles.append(reference_handle)
+        legend_labels.append("Nominal 95%")
+    fig.legend(legend_handles, legend_labels, loc="lower center",
+               ncol=len(legend_handles), frameon=False, bbox_to_anchor=(0.5, 0.01))
     fig.suptitle(title, fontsize=15, y=0.99)
     fig.subplots_adjust(left=0.075, right=0.99, top=0.91, bottom=0.13, wspace=0.26, hspace=0.34)
     fig.savefig(paths["png"], dpi=300, bbox_inches="tight", facecolor="white")
@@ -375,6 +390,21 @@ def make_stage5_sensitivity_figures(summary: pd.DataFrame, output_dir: str | Pat
     }
     outputs["fixed_n"]["csv"] = fixed_n_path
     outputs["fixed_p"]["csv"] = fixed_p_path
+    outputs["coverage_fixed_n"] = _stage5_panel_figure(
+        fixed_n, x="p", metric="coverage", lower=None, upper=None,
+        title="95% confidence-interval coverage at fixed sample size (n=1000)",
+        ylabel="Empirical 95% coverage", output=output,
+        basename="coverage_fixed_n", reference_y=0.95,
+    )
+    outputs["coverage_fixed_p"] = _stage5_panel_figure(
+        fixed_p, x="n", metric="coverage", lower=None, upper=None,
+        title="95% confidence-interval coverage at fixed feature dimension (p=50)",
+        ylabel="Empirical 95% coverage", output=output,
+        basename="coverage_fixed_p", reference_y=0.95,
+    )
+    outputs["coverage_fixed_n"]["csv"] = fixed_n_path
+    outputs["coverage_fixed_p"]["csv"] = fixed_p_path
+    methods = [method for method in _STAGE5_LABELS if method in set(summary["method"])]
 
     metric_labels = {
         "bias": "Bias", "coverage": "95% CI coverage",
@@ -391,7 +421,7 @@ def make_stage5_sensitivity_figures(summary: pd.DataFrame, output_dir: str | Pat
             for col, (scenario, panel_title) in enumerate(_STAGE5_SCENARIOS):
                 axis = axes[row, col]
                 panel = source.loc[source["scenario"].eq(scenario)]
-                for method in _STAGE5_LABELS:
+                for method in methods:
                     series = panel.loc[panel["method"].eq(method)].sort_values(x)
                     color, marker, linestyle = _STAGE5_STYLES[method]
                     (line,) = axis.plot(series[x], series[metric], color=color, marker=marker,
@@ -405,8 +435,8 @@ def make_stage5_sensitivity_figures(summary: pd.DataFrame, output_dir: str | Pat
                     axis.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.4g}"))
                 if col == 0:
                     axis.set_ylabel(f"{label}\n{'fixed n=1000' if row == 0 else 'fixed p=50'}")
-        fig.legend([handles[m] for m in _STAGE5_LABELS], list(_STAGE5_LABELS.values()),
-                   loc="lower center", ncol=6, frameon=False)
+        fig.legend([handles[m] for m in methods], [_STAGE5_LABELS[m] for m in methods],
+                   loc="lower center", ncol=len(methods), frameon=False)
         fig.suptitle(f"Stage 5 {label}", fontsize=14)
         fig.subplots_adjust(left=0.055, right=0.995, top=0.88, bottom=0.16, wspace=0.25, hspace=0.35)
         fig.savefig(paths["png"], dpi=300, bbox_inches="tight", facecolor="white")

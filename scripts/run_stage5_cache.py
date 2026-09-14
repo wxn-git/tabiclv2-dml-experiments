@@ -23,10 +23,10 @@ from tabdml.storage import ResultStore
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="configs/stage5_sensitivity.yaml")
+    parser.add_argument("--config", default="configs/stage5_sensitivity_five.yaml")
     parser.add_argument("--profile", choices=("smoke", "preflight", "formal"), default="smoke")
-    parser.add_argument("--frozen-tuning", default="results/stage5/tuning/frozen-fast.json")
-    parser.add_argument("--cache-root", default="results/stage5/smoke/cache")
+    parser.add_argument("--frozen-tuning", default="results/stage5_five/tuning/frozen-fast.json")
+    parser.add_argument("--cache-root", default="results/stage5_five/smoke/cache")
     parser.add_argument("--device-group", choices=("gpu", "cpu", "ensemble"), required=True)
     parser.add_argument("--num-shards", type=int, default=1)
     parser.add_argument("--shard-index", type=int, default=0)
