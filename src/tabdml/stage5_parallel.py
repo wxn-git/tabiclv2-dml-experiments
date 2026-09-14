@@ -74,6 +74,7 @@ def build_stage5_cache_commands(
     cache = _resolve(root, cache_root)
     output = _resolve(root, output_root or cache.parent / "raw")
     script = _resolve(root, "scripts/run_stage5_cache.py")
+    active_methods = tuple(load_stage5_config(config)["methods"])
     common = (
         str(python), str(script), "--config", str(config), "--profile", profile,
         "--frozen-tuning", str(tuning), "--cache-root", str(cache),
@@ -91,7 +92,7 @@ def build_stage5_cache_commands(
         f"ensemble_stage5_{index:02d}",
         (*common, "--device-group", "ensemble", "--num-shards", str(ensemble_workers),
          "--shard-index", str(index)),
-    ) for index in range(ensemble_workers))
+    ) for index in range(ensemble_workers)) if "ensemble" in active_methods else ()
     compose_argv = (
         str(python), str(_resolve(root, "scripts/compose_stage5_dml.py")),
         "--config", str(config), "--profile", profile,
@@ -119,6 +120,7 @@ def validate_stage5_gate(
     *,
     config_fingerprint: str | None = None,
     tuning_fingerprint: str | None = None,
+    expected_preflight_records: int = 900,
 ) -> None:
     if profile not in _EXPECTED:
         raise ValueError("profile must be smoke, preflight, or formal")
@@ -128,6 +130,8 @@ def validate_stage5_gate(
         if formal_approved:
             raise ValueError("formal approval is invalid outside the formal profile")
         return
+    if type(expected_preflight_records) is not int or expected_preflight_records < 1:
+        raise ValueError("expected_preflight_records must be a positive native integer")
     if not formal_approved or not isinstance(preflight_summary, Mapping):
         raise ValueError("formal profile requires explicit approval and a preflight summary")
     expected = {
@@ -135,7 +139,8 @@ def validate_stage5_gate(
         "seed_namespace": "stage5_preflight_v1",
         "config_fingerprint": config_fingerprint,
         "tuning_fingerprint": tuning_fingerprint,
-        "expected_records": 900, "successful_records": 900,
+        "expected_records": expected_preflight_records,
+        "successful_records": expected_preflight_records,
         **{field: 0 for field in _VIOLATIONS},
         "paired_seed_check": True, "center_dedup_check": True,
     }
@@ -349,6 +354,7 @@ def run_stage5_parallel(
         profile, summary, formal_approved,
         config_fingerprint=stage5_config_fingerprint(config),
         tuning_fingerprint=frozen["tuning_run_fingerprint"],
+        expected_preflight_records=30 * 5 * len(config["methods"]),
     )
     executable_path = Path(python_executable)
     candidate = _resolve(root, executable_path) if executable_path.parent != Path(".") else executable_path
@@ -365,7 +371,8 @@ def run_stage5_parallel(
             raise FileNotFoundError(f"Missing child script: {command.argv[1]}")
     _validate_destinations(root, (config_path, tuning_path), (cache, output, logs))
     pairs, tasks, _ = _universe(config, frozen, profile)
-    if len(pairs) != _EXPECTED[profile]:
+    expected_results = 30 * {"smoke": 1, "preflight": 5, "formal": 100}[profile] * len(config["methods"])
+    if len(pairs) != expected_results:
         raise ValueError("Stage 5 expected result universe mismatch")
     if dry_run:
         for name, commands in (("concurrent_cache", batches.concurrent), ("ensemble_cache", batches.ensemble), ("compose", batches.compose)):
@@ -385,7 +392,7 @@ def run_stage5_parallel(
     progress_path = logs / "progress.json"
     stages = (
         ("concurrent_cache", batches.concurrent),
-        ("ensemble_cache", batches.ensemble),
+        *(((("ensemble_cache", batches.ensemble),)) if batches.ensemble else ()),
         ("compose", batches.compose),
     )
 

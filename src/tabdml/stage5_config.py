@@ -26,6 +26,7 @@ _METHODS = (
     "lasso",
     "ensemble",
 )
+_FIVE_METHODS = _METHODS[:-1]
 _PROFILE_ORDER = ("smoke", "preflight", "formal")
 _PROFILE_CONTRACT = {
     "smoke": ("stage5_smoke", "stage5_smoke_v1", 1, False),
@@ -245,7 +246,13 @@ def _validate_stage5_config(config: Mapping[str, Any]) -> None:
     if _positive_int(config["folds"], "folds") != 5:
         raise ValueError("folds must be exactly 5")
     _validate_exact_ordered_list(config["scenarios"], _SCENARIOS, "scenarios")
-    _validate_exact_ordered_list(config["methods"], _METHODS, "methods")
+    methods = _sequence(config["methods"], "methods")
+    if any(not isinstance(item, str) for item in methods):
+        raise ValueError("methods values must be strings")
+    if len(methods) != len(set(methods)):
+        raise ValueError("methods contains duplicate values")
+    if tuple(methods) not in {_METHODS, _FIVE_METHODS}:
+        raise ValueError("methods must use the exact prescribed five- or legacy six-method order")
     grid = _validate_grid(config)
     if len(grid) * len(_SCENARIOS) != 30:
         raise ValueError("Stage 5 requires exactly 30 cells overall")

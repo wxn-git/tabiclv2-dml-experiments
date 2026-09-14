@@ -35,6 +35,17 @@ def test_command_batches_have_one_gpu_cpu_shards_ensemble_then_compose(tmp_path)
     assert all("--num-shards" in c.argv for c in (*batches.concurrent[1:], *batches.ensemble))
 
 
+def test_five_method_commands_have_no_ensemble_batch(tmp_path):
+    batches = parallel.build_stage5_cache_commands(
+        sys.executable, ROOT, ROOT / "configs/stage5_sensitivity_five.yaml",
+        tmp_path / "frozen.json", tmp_path / "cache", "preflight",
+        cpu_workers=5, ensemble_workers=2,
+    )
+    assert len(batches.concurrent) == 6
+    assert batches.ensemble == ()
+    assert len(batches.compose) == 1
+
+
 @pytest.mark.parametrize(("cpu", "ensemble"), [(4, 2), (9, 2), (5, 1), (5, 5), (True, 2)])
 def test_invalid_worker_counts(cpu, ensemble, tmp_path):
     with pytest.raises(ValueError):
@@ -119,6 +130,16 @@ def test_formal_gate_fails_closed(bad):
 def test_nonformal_rejects_formal_approval():
     with pytest.raises(ValueError):
         parallel.validate_stage5_gate("smoke", None, True)
+
+
+def test_five_method_exact_preflight_gate():
+    summary = exact_preflight_summary()
+    summary["expected_records"] = 750
+    summary["successful_records"] = 750
+    parallel.validate_stage5_gate(
+        "formal", summary, True, config_fingerprint="c" * 64,
+        tuning_fingerprint="t" * 64, expected_preflight_records=750,
+    )
 
 
 def _controller_fixture(monkeypatch, tmp_path):

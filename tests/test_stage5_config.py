@@ -31,6 +31,14 @@ def test_stage5_config_enumerates_thirty_unique_cells_with_six_centers():
     assert sum((cell.n, cell.p) == (1000, 50) for cell in cells) == 6
 
 
+def test_five_method_config_has_exact_protocol_and_counts():
+    five = load_stage5_config(Path("configs/stage5_sensitivity_five.yaml"))
+    assert five["methods"] == [
+        "tabiclv2_1", "tabiclv2_8", "xgboost_tuned", "extra_trees", "lasso"
+    ]
+    assert len(iter_sensitivity_cells(five)) == 30
+
+
 def test_linear_scenario_has_exact_cross_shaped_sensitivity_grid():
     cells = iter_sensitivity_cells(load_stage5_config(CONFIG))
 
