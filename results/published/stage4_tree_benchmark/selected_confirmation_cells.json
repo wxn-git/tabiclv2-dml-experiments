@@ -1,0 +1,252 @@
+{
+  "execution_profile": "full",
+  "screening_stage": "stage4_tree_screening",
+  "screening_seed_namespace": "stage4_tree_screening",
+  "expected_screening_replications": 20,
+  "selection_rule": "minimum_mean_tab_minus_xgb_squared_error",
+  "config_fingerprint": "f5779ed76049",
+  "screening_ranking": [
+    {
+      "panel": "standard",
+      "scenario": "tree_stumps",
+      "n": 1000,
+      "p": 10,
+      "mean_paired_squared_error_difference": -0.00014013879948909178,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "standard",
+      "scenario": "tree_stumps",
+      "n": 1000,
+      "p": 50,
+      "mean_paired_squared_error_difference": 5.9708845826790286e-05,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "standard",
+      "scenario": "tree_stumps",
+      "n": 2000,
+      "p": 10,
+      "mean_paired_squared_error_difference": 5.688006296852113e-05,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "standard",
+      "scenario": "tree_stumps",
+      "n": 2000,
+      "p": 50,
+      "mean_paired_squared_error_difference": 0.0001387107267889737,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "standard",
+      "scenario": "tree_hierarchical",
+      "n": 1000,
+      "p": 10,
+      "mean_paired_squared_error_difference": -0.0002846167580963001,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "standard",
+      "scenario": "tree_hierarchical",
+      "n": 1000,
+      "p": 50,
+      "mean_paired_squared_error_difference": -0.0007809522711262748,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "standard",
+      "scenario": "tree_hierarchical",
+      "n": 2000,
+      "p": 10,
+      "mean_paired_squared_error_difference": -0.00017444497803996987,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "standard",
+      "scenario": "tree_hierarchical",
+      "n": 2000,
+      "p": 50,
+      "mean_paired_squared_error_difference": -0.00023153895969007499,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "standard",
+      "scenario": "tree_forest_sum",
+      "n": 1000,
+      "p": 10,
+      "mean_paired_squared_error_difference": -0.0006307726753488013,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "standard",
+      "scenario": "tree_forest_sum",
+      "n": 1000,
+      "p": 50,
+      "mean_paired_squared_error_difference": -0.0012282548717910515,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "standard",
+      "scenario": "tree_forest_sum",
+      "n": 2000,
+      "p": 10,
+      "mean_paired_squared_error_difference": -9.453738626119255e-06,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "standard",
+      "scenario": "tree_forest_sum",
+      "n": 2000,
+      "p": 50,
+      "mean_paired_squared_error_difference": 0.0001366769977506099,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "small_n_high_p",
+      "scenario": "tree_stumps",
+      "n": 300,
+      "p": 50,
+      "mean_paired_squared_error_difference": -0.00140385898007833,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "small_n_high_p",
+      "scenario": "tree_stumps",
+      "n": 300,
+      "p": 100,
+      "mean_paired_squared_error_difference": -0.0005977272748427531,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "small_n_high_p",
+      "scenario": "tree_stumps",
+      "n": 500,
+      "p": 50,
+      "mean_paired_squared_error_difference": -0.000671756734142004,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "small_n_high_p",
+      "scenario": "tree_stumps",
+      "n": 500,
+      "p": 100,
+      "mean_paired_squared_error_difference": -0.0009787341892572505,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "small_n_high_p",
+      "scenario": "tree_hierarchical",
+      "n": 300,
+      "p": 50,
+      "mean_paired_squared_error_difference": -0.002773334939454295,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "small_n_high_p",
+      "scenario": "tree_hierarchical",
+      "n": 300,
+      "p": 100,
+      "mean_paired_squared_error_difference": -0.0012798898162146583,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "small_n_high_p",
+      "scenario": "tree_hierarchical",
+      "n": 500,
+      "p": 50,
+      "mean_paired_squared_error_difference": -0.000673890816161785,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "small_n_high_p",
+      "scenario": "tree_hierarchical",
+      "n": 500,
+      "p": 100,
+      "mean_paired_squared_error_difference": -0.0016904452099148937,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "small_n_high_p",
+      "scenario": "tree_forest_sum",
+      "n": 300,
+      "p": 50,
+      "mean_paired_squared_error_difference": 0.0023600953295768333,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "small_n_high_p",
+      "scenario": "tree_forest_sum",
+      "n": 300,
+      "p": 100,
+      "mean_paired_squared_error_difference": -0.00032006223155713433,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "small_n_high_p",
+      "scenario": "tree_forest_sum",
+      "n": 500,
+      "p": 50,
+      "mean_paired_squared_error_difference": -0.0018554388390324187,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "small_n_high_p",
+      "scenario": "tree_forest_sum",
+      "n": 500,
+      "p": 100,
+      "mean_paired_squared_error_difference": -0.0010052075823274982,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    }
+  ],
+  "cells": [
+    {
+      "panel": "standard",
+      "scenario": "tree_stumps",
+      "n": 1000,
+      "p": 10,
+      "mean_paired_squared_error_difference": -0.00014013879948909178,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "standard",
+      "scenario": "tree_hierarchical",
+      "n": 1000,
+      "p": 50,
+      "mean_paired_squared_error_difference": -0.0007809522711262748,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "standard",
+      "scenario": "tree_forest_sum",
+      "n": 1000,
+      "p": 50,
+      "mean_paired_squared_error_difference": -0.0012282548717910515,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "small_n_high_p",
+      "scenario": "tree_stumps",
+      "n": 300,
+      "p": 50,
+      "mean_paired_squared_error_difference": -0.00140385898007833,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "small_n_high_p",
+      "scenario": "tree_hierarchical",
+      "n": 300,
+      "p": 50,
+      "mean_paired_squared_error_difference": -0.002773334939454295,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    },
+    {
+      "panel": "small_n_high_p",
+      "scenario": "tree_forest_sum",
+      "n": 500,
+      "p": 50,
+      "mean_paired_squared_error_difference": -0.0018554388390324187,
+      "selection_rule": "minimum_mean_tab_minus_xgb_squared_error"
+    }
+  ]
+}

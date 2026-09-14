@@ -15,6 +15,7 @@ __pycache__/
 # Local agent and editor state
 .agents/
 .codex/
+.superpowers/
 .idea/
 .vscode/
 
@@ -27,6 +28,43 @@ tmp/
 results/*
 !results/published/
 !results/published/**
+
+# Stage 4 compact summaries only (analysis writes all six CSVs together).
+!results/stage4_tree_structure_checks/
+results/stage4_tree_structure_checks/*
+!results/stage4_tree_structure_checks/structure_checks.json
+!results/stage4_tree_structure_checks/structure_checks.csv
+!results/stage4_tree_tuning/
+results/stage4_tree_tuning/*
+!results/stage4_tree_tuning/selected_xgboost.json
+!results/stage4_tree_screening/
+results/stage4_tree_screening/*
+!results/stage4_tree_screening/selected_confirmation_cells.json
+!results/stage4_tree_confirmation/
+results/stage4_tree_confirmation/*
+!results/stage4_tree_confirmation/screening_summary.csv
+!results/stage4_tree_confirmation/screening_cell_ranking.csv
+!results/stage4_tree_confirmation/confirmation_summary.csv
+!results/stage4_tree_confirmation/primary_paired_comparisons.csv
+!results/stage4_tree_confirmation/coverage_diagnostics.csv
+!results/stage4_tree_confirmation/nuisance_diagnostics.csv
+!results/stage4_tree_confirmation/analysis_report_zh.md
+!results/stage4_tree_confirmation/environment.json
+!results/stage4_tree_confirmation/figures/
+results/stage4_tree_confirmation/figures/*
+!results/stage4_tree_confirmation/figures/dml_rmse_by_panel.png
+!results/stage4_tree_confirmation/figures/nuisance_mse_by_panel.png
+!results/stage4_tree_confirmation/figures/coverage_by_panel.png
+
+# Large raw/cache/log trees and isolated smoke/preflight/formal work roots.
+results/stage4_tree_tuning_raw/
+results/stage4_tree_screening_raw/
+results/stage4_tree_confirmation_raw/
+results/stage4_tree_cache/
+results/logs/stage4_tree/
+results/s4s*/
+results/s4p*/
+results/s4f*/
 
 # Release assets are uploaded to GitHub Releases, not committed
 _release/

@@ -1,6 +1,18 @@
-import pandas as pd
+import subprocess
+import sys
 
-from tabdml.figures import make_accuracy_cost_figure
+import pandas as pd
+from matplotlib.figure import Figure
+import pytest
+
+from tabdml.figures import (
+    make_accuracy_cost_figure,
+    make_stage5_sensitivity_figures,
+    make_treatment_effect_p_trend_figure,
+    prepare_treatment_effect_p_trend_data,
+)
+from test_stage5_analysis import records
+from tabdml.stage5_analysis import summarize_stage5
 
 
 def test_accuracy_cost_figure_renders_without_gui(tmp_path):
@@ -24,3 +36,221 @@ def test_accuracy_cost_figure_renders_without_gui(tmp_path):
     assert output.exists()
     assert output.stat().st_size > 0
 
+
+def test_prepare_treatment_effect_p_trend_data_selects_fixed_n_panels():
+    stage2 = pd.DataFrame(
+        [
+            {"scenario": "linear", "n": 2000, "p": 50, "learner": learner, "replications": 100, "rmse": rmse}
+            for learner, rmse in [("tabiclv2_1", 0.10), ("tabiclv2_8", 0.11), ("xgboost", 0.12)]
+        ]
+        + [
+            {"scenario": scenario, "n": n, "p": p, "learner": learner, "replications": 100, "rmse": rmse}
+            for scenario, n, dimensions in [("smooth", 1000, [50, 100]), ("tree", 5000, [10, 50])]
+            for p in dimensions
+            for learner, rmse in [("tabiclv2_1", 0.10), ("tabiclv2_8", 0.11), ("xgboost", 0.12)]
+        ]
+        + [
+            {"scenario": "smooth", "n": 500, "p": 50, "learner": "tabiclv2_1", "replications": 100, "rmse": 9.9},
+            {"scenario": "smooth", "n": 1000, "p": 50, "learner": "lasso", "replications": 100, "rmse": 9.9},
+        ]
+    )
+    stage4 = pd.DataFrame(
+        [
+            {
+                "panel": panel,
+                "scenario": scenario,
+                "n": n,
+                "p": p,
+                "method": method,
+                "replications": 20,
+                "rmse": rmse,
+            }
+            for panel, n in [("standard", 1000), ("small_n_high_p", 500)]
+            for scenario in ["tree_stumps", "tree_hierarchical", "tree_forest_sum"]
+            for p in [10, 50]
+            for method, rmse in [
+                ("tabiclv2_1", 0.10),
+                ("tabiclv2_8", 0.11),
+                ("xgboost", 0.12),
+                ("xgboost_tuned", 0.09),
+                ("extra_trees", 9.9),
+            ]
+        ]
+    )
+
+    result = prepare_treatment_effect_p_trend_data(stage2, stage4)
+
+    assert len(result) == 39
+    assert list(result["panel_key"].drop_duplicates()) == [
+        "stage2_linear",
+        "stage2_smooth",
+        "stage2_tree",
+        "stage4_tree_stumps",
+        "stage4_tree_hierarchical",
+        "stage4_tree_forest_sum",
+    ]
+    assert set(result["method_label"]) == {
+        "TabICLv2-1",
+        "TabICLv2-8",
+        "XGBoost",
+        "Tuned XGBoost",
+    }
+    assert result.groupby("panel_key")["n"].nunique().eq(1).all()
+    assert result.loc[result["stage"] == "Stage 2", "replications"].eq(100).all()
+    assert result.loc[result["stage"] == "Stage 4 screening", "replications"].eq(20).all()
+    assert result.loc[result["method_label"] == "Tuned XGBoost", "stage"].eq("Stage 4 screening").all()
+    assert result["treatment_effect_mse"].equals(result["rmse"].pow(2))
+    assert result["treatment_effect_mse"].max() == pytest.approx(0.12**2)
+
+
+def test_treatment_effect_p_trend_figure_exports_png_pdf_and_csv(tmp_path):
+    panel_specs = [
+        ("stage2_linear", "Linear", "Stage 2", 2000, 100),
+        ("stage2_smooth", "Smooth", "Stage 2", 1000, 100),
+        ("stage2_tree", "Original tree", "Stage 2", 5000, 100),
+        ("stage4_tree_stumps", "Tree stumps", "Stage 4 screening", 1000, 20),
+        ("stage4_tree_hierarchical", "Tree hierarchical", "Stage 4 screening", 1000, 20),
+        ("stage4_tree_forest_sum", "Tree forest-sum", "Stage 4 screening", 1000, 20),
+    ]
+    plot_data = pd.DataFrame(
+        [
+            {
+                "stage": stage,
+                "panel_key": panel_key,
+                "panel_title": title,
+                "n": n,
+                "p": p,
+                "replications": replications,
+                "method": "tabiclv2_1",
+                "method_label": "TabICLv2-1",
+                "rmse": 0.1,
+                "treatment_effect_mse": 0.01,
+            }
+            for panel_key, title, stage, n, replications in panel_specs
+            for p in [10, 50]
+        ]
+    )
+
+    outputs = make_treatment_effect_p_trend_figure(plot_data, tmp_path)
+
+    assert set(outputs) == {"png", "pdf", "csv"}
+    assert all(path.exists() and path.stat().st_size > 0 for path in outputs.values())
+    exported = pd.read_csv(outputs["csv"])
+    assert len(exported) == len(plot_data)
+    assert (exported["treatment_effect_mse"] > 0).all()
+
+
+def test_exploratory_p_mse_script_generates_all_outputs(tmp_path):
+    stage2 = pd.DataFrame(
+        [
+            {
+                "scenario": scenario,
+                "n": n,
+                "p": p,
+                "learner": learner,
+                "success_count": 100,
+                "rmse": rmse,
+            }
+            for scenario, n, dimensions in [
+                ("linear", 2000, [50]),
+                ("smooth", 1000, [50, 100]),
+                ("tree", 5000, [10, 50]),
+            ]
+            for p in dimensions
+            for learner, rmse in [("tabiclv2_1", 0.10), ("tabiclv2_8", 0.11), ("xgboost", 0.12)]
+        ]
+    )
+    stage4 = pd.DataFrame(
+        [
+            {
+                "panel": "standard",
+                "scenario": scenario,
+                "n": 1000,
+                "p": p,
+                "method": method,
+                "replications": 20,
+                "rmse": rmse,
+            }
+            for scenario in ["tree_stumps", "tree_hierarchical", "tree_forest_sum"]
+            for p in [10, 50]
+            for method, rmse in [
+                ("tabiclv2_1", 0.10),
+                ("tabiclv2_8", 0.11),
+                ("xgboost", 0.12),
+                ("xgboost_tuned", 0.09),
+            ]
+        ]
+    )
+    stage2_path = tmp_path / "stage2.csv"
+    stage4_path = tmp_path / "stage4.csv"
+    output_dir = tmp_path / "figure"
+    stage2.to_csv(stage2_path, index=False)
+    stage4.to_csv(stage4_path, index=False)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/make_exploratory_p_mse_figure.py",
+            "--stage2-summary",
+            str(stage2_path),
+            "--stage4-screening",
+            str(stage4_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stderr == ""
+    assert (output_dir / "treatment_effect_mse_by_p_exploratory.png").exists()
+    assert (output_dir / "treatment_effect_mse_by_p_exploratory.pdf").exists()
+    assert (output_dir / "treatment_effect_mse_by_p_exploratory_data.csv").exists()
+
+
+def test_stage5_figures_export_mse_and_coverage_primaries_plus_supplements(tmp_path):
+    summary = summarize_stage5(records(), bootstrap_resamples=200)
+    outputs = make_stage5_sensitivity_figures(summary, tmp_path)
+    assert {
+        "fixed_n", "fixed_p", "coverage_fixed_n", "coverage_fixed_p",
+        "bias", "coverage", "l_mse", "m_mse",
+    } == set(outputs)
+    for group in outputs.values():
+        assert group["png"].exists() and group["png"].stat().st_size > 0
+        assert group["pdf"].exists() and group["pdf"].stat().st_size > 0
+    assert outputs["fixed_n"]["csv"].exists()
+    assert outputs["fixed_p"]["csv"].exists()
+    assert outputs["coverage_fixed_n"]["csv"] == outputs["fixed_n"]["csv"]
+    assert outputs["coverage_fixed_p"]["csv"] == outputs["fixed_p"]["csv"]
+    exported = pd.read_csv(outputs["fixed_n"]["csv"])
+    assert sorted(exported["p"].unique()) == [10, 50, 100]
+
+
+def test_stage5_five_method_figures_exclude_ensemble(tmp_path):
+    summary = summarize_stage5(
+        records().loc[lambda frame: ~frame["method"].eq("ensemble")],
+        bootstrap_resamples=100,
+    )
+    outputs = make_stage5_sensitivity_figures(summary, tmp_path)
+    exported = pd.read_csv(outputs["fixed_n"]["csv"])
+    assert set(exported["method"]) == {
+        "tabiclv2_1", "tabiclv2_8", "xgboost_tuned", "extra_trees", "lasso"
+    }
+
+
+def test_stage5_coverage_primary_legend_labels_nominal_reference(monkeypatch, tmp_path):
+    labels = []
+    original = Figure.legend
+
+    def capture(self, *args, **kwargs):
+        if len(args) > 1:
+            labels.extend(args[1])
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "legend", capture)
+    make_stage5_sensitivity_figures(
+        summarize_stage5(records(), bootstrap_resamples=100), tmp_path
+    )
+    assert "Nominal 95%" in labels

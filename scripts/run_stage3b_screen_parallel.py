@@ -16,6 +16,7 @@ def parse_args():
     parser.add_argument("--output-root", default="results/stage3b_screening_raw")
     parser.add_argument("--selected-output", default="results/stage3b_screening/selected_models.json")
     parser.add_argument("--log-dir", default="results/logs/stage3b_screening")
+    parser.add_argument("--config", default="configs/stage3b_tree_publication.yaml")
     return parser.parse_args()
 
 
@@ -28,12 +29,14 @@ def main() -> int:
     args = parse_args()
     project_root = Path(__file__).resolve().parents[1]
     output_root = _resolve(project_root, args.output_root)
+    config_path = _resolve(project_root, args.config)
     commands = build_stage3b_screening_commands(
         sys.executable,
         project_root,
         output_root,
         args.cpu_workers,
         args.replications,
+        config_path=config_path,
     )
     print(f"Launching {len(commands)} Stage 3B screening workers.", flush=True)
     exit_codes = run_workers(
@@ -53,6 +56,8 @@ def main() -> int:
             str(_resolve(project_root, args.selected_output)),
             "--replications",
             str(args.replications),
+            "--config",
+            str(config_path),
             "--select",
         ),
         cwd=project_root,

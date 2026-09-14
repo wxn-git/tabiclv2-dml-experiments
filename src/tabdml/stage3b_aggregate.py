@@ -17,6 +17,15 @@ GROUP_COLUMNS = [
     "learner_m_config_hash",
 ]
 
+COMPARISON_METRICS = [
+    "bias",
+    "rmse",
+    "coverage",
+    "mean_l_mse",
+    "mean_m_mse",
+    "mean_lm_error_cross",
+]
+
 
 def _markdown_value(value) -> str:
     if pd.isna(value):
@@ -79,3 +88,23 @@ def aggregate_dml_records(records: list[dict], theta0: float) -> pd.DataFrame:
         )
         rows.append(row)
     return pd.DataFrame(rows).sort_values(GROUP_COLUMNS).reset_index(drop=True)
+
+
+def compare_dml_summaries(
+    baseline: pd.DataFrame,
+    candidate: pd.DataFrame,
+) -> pd.DataFrame:
+    keys = ["learner_l", "learner_m"]
+    columns = [*keys, *COMPARISON_METRICS]
+    merged = baseline[columns].merge(
+        candidate[columns],
+        on=keys,
+        how="inner",
+        suffixes=("_baseline", "_candidate"),
+        validate="one_to_one",
+    )
+    for metric in COMPARISON_METRICS:
+        merged[f"{metric}_delta"] = (
+            merged[f"{metric}_candidate"] - merged[f"{metric}_baseline"]
+        )
+    return merged.sort_values(keys).reset_index(drop=True)

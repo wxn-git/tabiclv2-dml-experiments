@@ -1,0 +1,32 @@
+theta0: 1.0
+folds: 5
+structures: [tree_stumps, tree_hierarchical, tree_forest_sum]
+panels:
+  standard: {sample_sizes: [1000, 2000], dimensions: [10, 50]}
+  small_n_high_p: {sample_sizes: [300, 500], dimensions: [50, 100]}
+tuning:
+  stage: stage4_tree_tuning
+  seed_namespace: stage4_tree_tuning
+  replications: 10
+  validation_fraction: 0.25
+  targets: [l, m]
+  xgboost_candidates:
+    - {name: xgb_d1_lr003, params: {n_estimators: 800, max_depth: 1, learning_rate: 0.03, min_child_weight: 1, reg_lambda: 1.0, subsample: 0.9, colsample_bytree: 1.0, tree_method: hist}}
+    - {name: xgb_d2_lr003, params: {n_estimators: 800, max_depth: 2, learning_rate: 0.03, min_child_weight: 1, reg_lambda: 1.0, subsample: 0.9, colsample_bytree: 1.0, tree_method: hist}}
+    - {name: xgb_d2_lr005, params: {n_estimators: 600, max_depth: 2, learning_rate: 0.05, min_child_weight: 5, reg_lambda: 1.0, subsample: 0.9, colsample_bytree: 1.0, tree_method: hist}}
+    - {name: xgb_d3_lr003, params: {n_estimators: 800, max_depth: 3, learning_rate: 0.03, min_child_weight: 5, reg_lambda: 1.0, subsample: 0.9, colsample_bytree: 1.0, tree_method: hist}}
+    - {name: xgb_d3_lr005, params: {n_estimators: 600, max_depth: 3, learning_rate: 0.05, min_child_weight: 10, reg_lambda: 2.0, subsample: 0.9, colsample_bytree: 1.0, tree_method: hist}}
+    - {name: xgb_d4_lr003, params: {n_estimators: 800, max_depth: 4, learning_rate: 0.03, min_child_weight: 5, reg_lambda: 2.0, subsample: 0.9, colsample_bytree: 1.0, tree_method: hist}}
+screening:
+  stage: stage4_tree_screening
+  seed_namespace: stage4_tree_screening
+  replications: 20
+  methods: [tabiclv2_1, tabiclv2_8, xgboost, xgboost_tuned, extra_trees, oracle]
+confirmation:
+  stage: stage4_tree_confirmation
+  seed_namespace: stage4_tree_confirmation
+  smoke_replications: 5
+  replications: 100
+  methods: [tabiclv2_1, tabiclv2_8, xgboost, xgboost_tuned, extra_trees, oracle]
+extra_trees:
+  params: {n_estimators: 600, max_features: 1.0, min_samples_leaf: 2}

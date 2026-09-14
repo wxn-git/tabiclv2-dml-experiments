@@ -1,0 +1,94 @@
+{
+  "counts": {
+    "confirmation_cells": 6,
+    "confirmation_records": 6000,
+    "confirmation_replications": 100,
+    "primary_comparisons": 6,
+    "screening_cells": 24,
+    "screening_records": 4800,
+    "tuning_entries": 48,
+    "tuning_records": 2880
+  },
+  "execution_profile": "full",
+  "files": {
+    "analysis_report_zh.md": {
+      "bytes": 2567,
+      "sha256": "d011c4154083d891c672b6a815a55bbf5f4316bfc6112e036c329df248916bfb"
+    },
+    "confirmation_summary.csv": {
+      "bytes": 21619,
+      "sha256": "a721fa7dcaae0dfe970d88e3f40228983f6dff0999ea07a78a8e4b6281b1cf2e"
+    },
+    "coverage_diagnostics.csv": {
+      "bytes": 7806,
+      "sha256": "3294186c7fe5f057e69817034fe577b9173b4942e4944498d793ca4a703329c2"
+    },
+    "environment.json": {
+      "bytes": 453,
+      "sha256": "232ef773f80a26384b757d4a0f1a925aeeb805f8311487ab4f1acc63e4625443"
+    },
+    "figures/coverage_by_panel.png": {
+      "bytes": 115588,
+      "sha256": "c0a63878818eed8470ad5b00503e4b0bef9b352f3dc4d8e5e19822725aae82a8"
+    },
+    "figures/dml_rmse_by_panel.png": {
+      "bytes": 96548,
+      "sha256": "68451947ee8e702b5b6d10372134e71400e9a5522753d33d8f1ee9e8db0d3f16"
+    },
+    "figures/nuisance_mse_by_panel.png": {
+      "bytes": 198507,
+      "sha256": "d4ce103265fd1262766d0fc366b3b40122a6c001071f9876c4c6fff4bcfe1809"
+    },
+    "nuisance_diagnostics.csv": {
+      "bytes": 14386,
+      "sha256": "da9f31814ab22a492ed051e0f5c7812a20644e626f434e32c498b081664be631"
+    },
+    "primary_paired_comparisons.csv": {
+      "bytes": 2506,
+      "sha256": "cd265daf12f6c99cf892cc13ed555f0cc981a949316bb4f5a9c5fbb2e40360ed"
+    },
+    "screening_cell_ranking.csv": {
+      "bytes": 2338,
+      "sha256": "1c70332e88b8bec792ecb164a7f67df66c9dc15751340f29e559edf1108758af"
+    },
+    "screening_summary.csv": {
+      "bytes": 84301,
+      "sha256": "c42b2f4ed705ba95fbf7f6d54db5d33966b5cafa7819694a2196fc3585f527ef"
+    },
+    "selected_confirmation_cells.json": {
+      "bytes": 8010,
+      "sha256": "f0710040fb5a70698547aa8ca16d4a620f57b0a5ab582acc34952c8cbd60d15a"
+    },
+    "selected_xgboost.json": {
+      "bytes": 50728,
+      "sha256": "cea9648cbf8fa1594c745fe3427d5f330bd0a1a8abe0ded4db7c8e48d0359300"
+    },
+    "stage4_tree_benchmark.yaml": {
+      "bytes": 1986,
+      "sha256": "12a320ece3a3405dfbb6f243300741cd80af68107999e84b55749160256bda4c"
+    },
+    "structure_checks.csv": {
+      "bytes": 7356,
+      "sha256": "60c3932dbe6f15436c3ef660260c2d823c386bafb6c151a7113ebcea651babbd"
+    },
+    "structure_checks.json": {
+      "bytes": 24782,
+      "sha256": "407d9047c013626fdd0f06f5bbd581915fd2b327ee0ebe1f2241ad944827a286"
+    }
+  },
+  "raw_inputs": {
+    "confirmation": {
+      "records": 6000,
+      "sha256": "ebbed1ec6bf5264716b903cf94c77499760989eadd0b1ce3febabe12124afd85"
+    },
+    "screening": {
+      "records": 4800,
+      "sha256": "d68fd0da7377b50f50b39cb7f23e5c3a0194625a382c27c6bb8d9a708bc7871b"
+    },
+    "tuning": {
+      "records": 2880,
+      "sha256": "c69b789bcfd08bc6e4e73c1cf109c43fbf6964ce520eb086f8077a1a0171b261"
+    }
+  },
+  "schema": "stage4_publication_v1"
+}

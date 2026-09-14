@@ -1,6 +1,10 @@
 import numpy as np
 
-from tabdml.stage3b_aggregate import aggregate_dml_records, markdown_table
+from tabdml.stage3b_aggregate import (
+    aggregate_dml_records,
+    compare_dml_summaries,
+    markdown_table,
+)
 
 
 def test_aggregate_reports_core_inference_and_proxy_metrics():
@@ -54,3 +58,34 @@ def test_markdown_table_does_not_require_optional_tabulate_dependency():
 
     assert "| method | rmse |" in text
     assert "| tab | 0.1235 |" in text
+
+
+def test_compare_dml_summaries_reports_baseline_candidate_and_delta():
+    pandas = __import__("pandas")
+    baseline = pandas.DataFrame(
+        {
+            "learner_l": ["xgboost"],
+            "learner_m": ["xgboost"],
+            "bias": [-0.05],
+            "rmse": [0.06],
+            "coverage": [0.46],
+            "mean_l_mse": [0.28],
+            "mean_m_mse": [0.13],
+            "mean_lm_error_cross": [0.07],
+        }
+    )
+    candidate = baseline.copy()
+    candidate.loc[0, ["bias", "rmse", "coverage", "mean_m_mse"]] = [
+        -0.01,
+        0.03,
+        0.94,
+        0.07,
+    ]
+
+    comparison = compare_dml_summaries(baseline, candidate)
+    row = comparison.iloc[0]
+
+    assert np.isclose(row["bias_delta"], 0.04)
+    assert np.isclose(row["rmse_delta"], -0.03)
+    assert np.isclose(row["coverage_delta"], 0.48)
+    assert np.isclose(row["mean_m_mse_delta"], -0.06)

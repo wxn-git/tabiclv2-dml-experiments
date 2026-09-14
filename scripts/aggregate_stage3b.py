@@ -1,11 +1,29 @@
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
 import pandas as pd
 
-from tabdml.stage3b_aggregate import aggregate_dml_records, markdown_table
+from tabdml.stage3b_aggregate import (
+    aggregate_dml_records,
+    compare_dml_summaries,
+    markdown_table,
+)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--batch-a-root", default="results/stage3b_batch_a_raw")
+    parser.add_argument("--screening-root", default="results/stage3b_screening_raw")
+    parser.add_argument(
+        "--confirmation-root", default="results/stage3b_confirmation_raw"
+    )
+    parser.add_argument("--output-root", default="results/stage3b_analysis")
+    parser.add_argument("--title", default="Stage 3B Tree机制诊断与处理模型筛选结果")
+    parser.add_argument("--baseline-confirmation-summary")
+    return parser.parse_args()
 
 
 def _read_json(root: Path) -> list[dict]:
@@ -16,11 +34,12 @@ def _read_json(root: Path) -> list[dict]:
 
 
 def main() -> int:
-    output = Path("results/stage3b_analysis")
+    args = parse_args()
+    output = Path(args.output_root)
     output.mkdir(parents=True, exist_ok=True)
-    batch_a_records = _read_json(Path("results/stage3b_batch_a_raw"))
-    confirmation_records = _read_json(Path("results/stage3b_confirmation_raw"))
-    screening_records = _read_json(Path("results/stage3b_screening_raw"))
+    batch_a_records = _read_json(Path(args.batch_a_root))
+    confirmation_records = _read_json(Path(args.confirmation_root))
+    screening_records = _read_json(Path(args.screening_root))
 
     batch_a = aggregate_dml_records(batch_a_records, theta0=1.0)
     confirmation = aggregate_dml_records(confirmation_records, theta0=1.0)
@@ -44,6 +63,12 @@ def main() -> int:
     screening.to_csv(output / "screening_summary.csv", index=False)
     confirmation.to_csv(output / "confirmation_summary.csv", index=False)
 
+    comparison = None
+    if args.baseline_confirmation_summary:
+        baseline = pd.read_csv(args.baseline_confirmation_summary)
+        comparison = compare_dml_summaries(baseline, confirmation)
+        comparison.to_csv(output / "tree_comparison.csv", index=False)
+
     key_columns = [
         "learner_l",
         "learner_m",
@@ -57,7 +82,7 @@ def main() -> int:
         "mean_proxy_error",
     ]
     report = [
-        "# Stage 3B Tree机制诊断与处理模型筛选结果",
+        f"# {args.title}",
         "",
         "## Batch A：现有Stage 3A误差分解",
         "",
@@ -84,6 +109,29 @@ def main() -> int:
         "",
         "说明：Batch C仍属于50次筛选后确认；论文最终覆盖率表需使用预先锁定配置和新的200至500次重复。",
     ]
+    if comparison is not None:
+        report.extend(
+            [
+                "",
+                "## 与基准场景的独立确认对照",
+                "",
+                markdown_table(
+                    comparison,
+                    [
+                        "learner_l",
+                        "learner_m",
+                        "bias_baseline",
+                        "bias_candidate",
+                        "rmse_baseline",
+                        "rmse_candidate",
+                        "coverage_baseline",
+                        "coverage_candidate",
+                        "mean_m_mse_baseline",
+                        "mean_m_mse_candidate",
+                    ],
+                ),
+            ]
+        )
     (output / "analysis_report_zh.md").write_text("\n".join(report), encoding="utf-8")
     print(f"Wrote Stage 3B analysis to {output}")
     return 0

@@ -30,6 +30,24 @@ def _base_columns(X: NDArray[np.float64]) -> tuple[NDArray[np.float64], ...]:
     return tuple(X[:, i % X.shape[1]] for i in range(6))
 
 
+def _hierarchical_raw(
+    X: NDArray[np.float64],
+    root: int,
+    left: int,
+    right: int,
+    a: float,
+    b: float,
+    c: float,
+) -> NDArray[np.float64]:
+    root_positive = X[:, root] > 0
+    return np.asarray(
+        a * root_positive
+        + b * (root_positive & (X[:, left] > 0))
+        + c * ((~root_positive) & (X[:, right] > 0)),
+        dtype=float,
+    )
+
+
 def simulate_plr(
     scenario: str,
     n: int,
@@ -37,6 +55,8 @@ def simulate_plr(
     seed: int,
     theta0: float = 1.0,
 ) -> SimulatedData:
+    if scenario == "tree_forest_sum" and p < 10:
+        raise ValueError("tree_forest_sum requires p >= 10.")
     if n < 10 or p < 5:
         raise ValueError("PLR simulations require n >= 10 and p >= 5.")
     rng = np.random.default_rng(seed)
@@ -64,6 +84,22 @@ def simulate_plr(
             + 0.6 * (x2 > 0) * (x3 < 0)
             - 0.5 * (x4 > 0.5)
         )
+    elif scenario == "tree_simple":
+        raw_m = 0.9 * (x0 > 0) - 0.7 * (x1 > 0) + 0.5 * (x2 > 0)
+        raw_g = 0.8 * (x0 > 0) + 0.6 * (x3 > 0) - 0.5 * (x4 > 0)
+    elif scenario == "tree_stumps":
+        raw_m = 0.9 * (x0 > 0) - 0.7 * (x1 > 0) + 0.5 * (x2 > 0)
+        raw_g = 0.8 * (x0 > 0) + 0.6 * (x3 > 0) - 0.5 * (x4 > 0)
+    elif scenario == "tree_hierarchical":
+        raw_m = _hierarchical_raw(X, 0, 1, 2, 0.8, 0.6, -0.4)
+        raw_g = _hierarchical_raw(X, 0, 3, 4, 0.7, 0.5, -0.4)
+    elif scenario == "tree_forest_sum":
+        raw_m = _hierarchical_raw(X, 0, 1, 2, 0.55, 0.40, -0.30) + _hierarchical_raw(
+            X, 3, 4, 5, 0.45, -0.35, 0.30
+        )
+        raw_g = _hierarchical_raw(X, 0, 6, 7, 0.50, 0.35, -0.25) + _hierarchical_raw(
+            X, 3, 8, 9, 0.40, -0.30, 0.25
+        )
     elif scenario == "mixed":
         binary = X[:, p - 2]
         category = X[:, p - 1]
@@ -89,4 +125,3 @@ def simulate_plr(
         theta0=float(theta0),
         categorical_indices=categorical_indices,
     )
-
